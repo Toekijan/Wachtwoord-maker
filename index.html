@@ -71,6 +71,8 @@
   }
   .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
   #status { min-height: 1.4em; margin-top: 10px; color: var(--ok); font-size: .9rem; }
+  .hint { min-height: 1.4em; margin: 8px 0 0; color: var(--muted); font-size: .85rem; }
+  .linkbtn { min-height: 0; padding: 0; border: 0; background: none; color: var(--accent); text-decoration: underline; font-weight: 400; font-size: inherit; }
   .note { margin-top: 20px; color: var(--muted); font-size: .8rem; }
 </style>
 </head>
@@ -96,6 +98,7 @@
     <label class="len"><input type="radio" name="len" value="32"><span>32</span></label>
     <label class="len"><input type="radio" name="len" value="64"><span>64</span></label>
   </div>
+  <p id="lenHint" class="hint" role="status" aria-live="polite"></p>
 
   <div class="result">
     <label for="output">Jouw code</label>
@@ -108,13 +111,15 @@
     <div id="status" role="status" aria-live="polite"></div>
   </div>
 
-  <p class="note">Er wordt niets opgeslagen of verstuurd. De code wordt elke keer opnieuw berekend uit naam + wachtwoord (PBKDF2-SHA256, 600.000 rondes). Onthoud dus je wachtwoord en de exacte schrijfwijze van de naam (hoofdletters en spaties aan de randen worden genegeerd). "Knippen" kopieert de code en wist hem van het scherm.</p>
+  <p class="note">Je wachtwoord en de code worden nooit opgeslagen of verstuurd. De code wordt elke keer opnieuw berekend uit naam + wachtwoord (PBKDF2-SHA256, 600.000 rondes). Onthoud dus je wachtwoord en de exacte schrijfwijze van de naam (hoofdletters en spaties aan de randen worden genegeerd). "Knippen" kopieert de code en wist hem van het scherm.</p>
+  <p class="note">Wel onthoudt de app op dit apparaat welke lengte je het laatst koos voor een combinatie van naam + wachtwoord. Dat staat onder een sleutel die niet naar je naam of wachtwoord terug te rekenen is. Op een ander apparaat kies je de lengte dus één keer opnieuw. <button type="button" id="forget" class="linkbtn">Wis onthouden lengtes</button></p>
 </main>
 
 <script>
 (() => {
   const $ = (id) => document.getElementById(id);
   const app = $('app'), pw = $('pw'), out = $('output'), status = $('status');
+  const hint = $('lenHint'), forgetBtn = $('forget');
   const copyBtn = $('copy'), cutBtn = $('cut'), pasteBtn = $('paste'), toggle = $('toggle');
 
   const LOWER = 'abcdefghijkmnopqrstuvwxyz';   // zonder l
@@ -141,15 +146,17 @@
     return null;
   }
 
-  async function derive(name, secret, length) {
+  // Eén dure afleiding per naam + wachtwoord. De lengte hoort NIET in de salt,
+  // zodat kortere varianten het begin zijn van langere en wisselen van lengte direct gaat.
+  async function deriveBase(name, secret) {
     const key = await crypto.subtle.importKey('raw', enc.encode(secret.normalize('NFKC')), 'PBKDF2', false, ['deriveBits']);
     const salt = enc.encode('wachtwoord-maker|v1|' + name.trim().toLowerCase().normalize('NFKC'));
-    // Eén dure afleiding; lengte hoort NIET in de salt, zodat 6/8/16/... kortere/langere varianten zijn van dezelfde reeks.
     const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt, iterations: ITERATIONS }, key, 8 * 1024);
-    const bytes = new Uint8Array(bits);
+    return new Uint8Array(bits);
+  }
 
-    // Deterministisch: bij ontbrekende tekensoort pakken we het volgende stuk uit dezelfde reeks.
-    const needAll = length >= 6;
+  // Deterministisch: bij een ontbrekende tekensoort pakken we het volgende stuk uit dezelfde reeks.
+  function makeCode(bytes, length) {
     for (let attempt = 0; attempt < 8; attempt++) {
       const state = { i: attempt * 128 };
       const chars = [];
@@ -160,11 +167,29 @@
       }
       if (chars.length < length) continue;
       const s = chars.join('');
-      const ok = !needAll || ([LOWER, UPPER, DIGIT, SYMBOL].every(set => [...s].some(ch => set.includes(ch))));
-      if (ok) return s;
+      if ([LOWER, UPPER, DIGIT, SYMBOL].every(set => [...s].some(ch => set.includes(ch)))) return s;
     }
     throw new Error('Kon geen code afleiden');
   }
+
+  // Sleutel voor de onthouden lengte: hash van de (dure) PBKDF2-uitvoer met een eigen label.
+  // Niet terug te rekenen naar naam, wachtwoord of de code zelf.
+  async function lengthId(bytes) {
+    const label = enc.encode('wachtwoord-maker|lengte|v1|');
+    const buf = new Uint8Array(label.length + 32);
+    buf.set(label); buf.set(bytes.subarray(0, 32), label.length);
+    const h = new Uint8Array(await crypto.subtle.digest('SHA-256', buf));
+    return [...h].map(b => b.toString(16).padStart(2, '0')).join('');
+  }
+
+  const STORE = 'wm.lengths';
+  const LENGTHS = [6, 8, 16, 32, 64];
+  function loadLengths() { try { return JSON.parse(localStorage.getItem(STORE)) || {}; } catch { return {}; } }
+  function saveLength(id, len) {
+    try { const m = loadLengths(); m[id] = len; localStorage.setItem(STORE, JSON.stringify(m)); return true; }
+    catch { return false; }
+  }
+  function selectLength(len) { document.querySelector(`input[name=len][value="${len}"]`).checked = true; }
 
   function setOutput(v) {
     current = v;
@@ -178,17 +203,43 @@
     say.t = setTimeout(() => (status.textContent = ''), 3000);
   }
 
+  let base = null;      // { bytes, id } van de huidige naam + wachtwoord
+
+  function show() {
+    try { setOutput(makeCode(base.bytes, getLen())); }
+    catch (e) { setOutput(''); out.placeholder = 'Fout: ' + e.message; }
+  }
+
   async function update() {
     const my = ++run;
+    base = null;
+    hint.textContent = '';
     if (!app.value.trim() || !pw.value) { setOutput(''); out.placeholder = 'Vul naam en wachtwoord in…'; return; }
     out.placeholder = 'Berekenen…';
     setOutput('');
     try {
-      const code = await derive(app.value, pw.value, getLen());
-      if (my === run) setOutput(code);
+      const bytes = await deriveBase(app.value, pw.value);
+      const id = await lengthId(bytes);
+      if (my !== run) return;
+      base = { bytes, id };
+      const saved = loadLengths()[id];
+      if (LENGTHS.includes(saved)) {
+        selectLength(saved);
+        hint.textContent = `Laatst gekozen lengte voor deze combinatie: ${saved}. Je kunt dit wijzigen.`;
+      }
+      show();
     } catch (e) {
       if (my === run) { setOutput(''); out.placeholder = 'Fout: ' + e.message; }
     }
+  }
+
+  function onLengthChange() {
+    if (!base) return;            // nog geen geldige combinatie: niets te tonen of te onthouden
+    show();
+    const len = getLen();
+    hint.textContent = saveLength(base.id, len)
+      ? `Lengte ${len} onthouden voor deze combinatie op dit apparaat.`
+      : 'Lengte kon niet worden onthouden (opslag niet beschikbaar).';
   }
 
   function schedule() { clearTimeout(timer); timer = setTimeout(update, 250); }
@@ -206,7 +257,12 @@
 
   app.addEventListener('input', schedule);
   pw.addEventListener('input', schedule);
-  document.querySelectorAll('input[name=len]').forEach(r => r.addEventListener('change', update));
+  document.querySelectorAll('input[name=len]').forEach(r => r.addEventListener('change', onLengthChange));
+
+  forgetBtn.addEventListener('click', () => {
+    try { localStorage.removeItem(STORE); say('Onthouden lengtes gewist.'); } catch { say('Wissen niet mogelijk.'); }
+    hint.textContent = '';
+  });
 
   toggle.addEventListener('click', () => {
     const show = pw.type === 'password';
