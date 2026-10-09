@@ -74,6 +74,7 @@
     word-break: break-all; resize: vertical; color: var(--text);
   }
   button.wide { width: 100%; margin-top: 8px; font-size: 1.05rem; }
+  button[hidden] { display: none; }
   .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
   #status { min-height: 1.4em; margin-top: 10px; color: var(--ok); font-size: .9rem; }
   .combo { position: relative; }
@@ -93,7 +94,7 @@
 <body>
 <main>
   <h1>Wachtwoord Maker</h1>
-  <p class="sub">Zelfde naam + zelfde wachtwoord = altijd dezelfde code. Alles gebeurt lokaal in je browser.</p>
+  <p class="sub">Zelfde naam + zelfde wachtwoord = dezelfde code, tot je zelf een nieuwe laat maken. Alles gebeurt lokaal in je browser.</p>
 
   <form id="form" novalidate>
   <label for="app">Naam van de app</label>
@@ -121,12 +122,13 @@
   </div>
   <p id="lenHint" class="hint" role="status" aria-live="polite"></p>
 
-  <button type="submit" class="primary wide" id="make">Code maken</button>
+  <button type="button" class="primary wide" id="make">Code maken</button>
+  <button type="button" class="wide" id="prev" hidden>Vorige versie</button>
   </form>
 
   <div class="result">
     <label for="output">Jouw code</label>
-    <textarea id="output" readonly rows="2" placeholder="Vul naam en wachtwoord in en druk op Code maken."></textarea>
+    <textarea id="output" readonly rows="2" placeholder="Vul naam en wachtwoord in."></textarea>
     <div class="actions">
       <button type="button" class="primary" id="copy" disabled>Kopiëren</button>
       <button type="button" id="cut" disabled>Knippen</button>
@@ -135,15 +137,16 @@
   </div>
 
   <p class="note">Je wachtwoord en de code worden nooit opgeslagen of verstuurd. De code wordt elke keer opnieuw berekend uit naam + wachtwoord (PBKDF2-SHA256, 600.000 rondes). Onthoud dus je wachtwoord en de exacte schrijfwijze van de naam (hoofdletters en spaties aan de randen worden genegeerd). "Knippen" kopieert de code en wist hem van het scherm.</p>
-  <p class="note">Wel onthoudt de app op dit apparaat welke lengte je het laatst koos voor een combinatie van naam + wachtwoord, onder een sleutel die niet naar je naam of wachtwoord terug te rekenen is. De laatste 5 appnamen worden leesbaar bewaard voor het uitklapmenu; je wachtwoord nooit. Op een ander apparaat kies je de lengte dus één keer opnieuw. <button type="button" id="forget" class="linkbtn">Wis onthouden lengtes en namen</button></p>
+  <p class="note">Wel onthoudt de app op dit apparaat per combinatie van naam + wachtwoord de laatst gekozen lengte en het versienummer van je code, onder een sleutel die niet naar je naam of wachtwoord terug te rekenen is. De laatste 5 appnamen worden leesbaar bewaard voor het uitklapmenu; je wachtwoord nooit. Op een ander apparaat begin je weer bij versie 1: noteer dus het versienummer als je een nieuwe code liet maken, en druk daar zo vaak op "Nieuwe code maken" tot je bij hetzelfde nummer bent. <button type="button" id="forget" class="linkbtn">Wis onthouden gegevens</button></p>
 </main>
 
 <script>
 (() => {
   const $ = (id) => document.getElementById(id);
   const app = $('app'), pw = $('pw'), out = $('output'), status = $('status');
-  const makeBtn = $('make'), hint = $('lenHint'), forgetBtn = $('forget');
+  const makeBtn = $('make'), prevBtn = $('prev'), hint = $('lenHint'), forgetBtn = $('forget');
   const copyBtn = $('copy'), cutBtn = $('cut'), toggle = $('toggle');
+  const recentBtn = $('recentBtn'), recentMenu = $('recentMenu');
 
   const LOWER = 'abcdefghijkmnopqrstuvwxyz';   // zonder l
   const UPPER = 'ABCDEFGHJKLMNPQRSTUVWXYZ';    // zonder I, O
@@ -152,12 +155,21 @@
   const ALL = LOWER + UPPER + DIGIT + SYMBOL;
   const ITERATIONS = 600000;
   const STREAM_BYTES = 4096, MAX_ATTEMPTS = 250;
+  const LENGTHS = [6, 8, 16, 32, 64];
   const enc = new TextEncoder();
 
-  let run = 0;          // voorkomt dat een oud (traag) resultaat een nieuwer overschrijft
+  let run = 0;            // elke wijziging van naam/wachtwoord maakt lopende berekeningen ongeldig
+  let timer = null;
+  let base = null;        // { hk, id, cache } voor de huidige naam + wachtwoord
+  let rec = null;         // onthouden { len, ver } van deze combinatie, of null als de combinatie nieuw is
+  let hidden = false;     // code is geknipt: wel bekend, niet getoond
+  let busy = false;
   let current = '';
 
   const getLen = () => +document.querySelector('input[name=len]:checked').value;
+  const selectLength = (len) => { document.querySelector(`input[name=len][value="${len}"]`).checked = true; };
+
+  // ---------- Afleiding ----------
 
   // Rejection sampling: geen modulo-bias. Retourneert null als de bytes op zijn.
   function pick(bytes, state, set) {
@@ -169,18 +181,24 @@
     return null;
   }
 
-  // Eén dure afleiding (PBKDF2, één blok) per naam + wachtwoord, daarna goedkoop uitgerekt tot
-  // een reeks bytes met HMAC-SHA256. De lengte hoort NIET in de afleiding, dus wisselen van
-  // lengte gaat direct.
-  async function deriveBase(name, secret) {
+  // Eén dure afleiding (PBKDF2, één blok) per naam + wachtwoord.
+  async function deriveKey(name, secret) {
     const key = await crypto.subtle.importKey('raw', enc.encode(secret.normalize('NFKC')), 'PBKDF2', false, ['deriveBits']);
     const salt = enc.encode('wachtwoord-maker|v2|' + name.trim().toLowerCase().normalize('NFKC'));
     const seed = await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt, iterations: ITERATIONS }, key, 256);
-    const hk = await crypto.subtle.importKey('raw', seed, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+    return crypto.subtle.importKey('raw', seed, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  }
+
+  // Goedkope uitrekking tot een reeks bytes per versie. Versie 1 is de oorspronkelijke reeks;
+  // een nieuwe versie geeft een totaal andere code voor dezelfde naam + wachtwoord.
+  async function getBytes(ver) {
+    if (base.cache.has(ver)) return base.cache.get(ver);
     const bytes = new Uint8Array(STREAM_BYTES);
     for (let i = 0; i < STREAM_BYTES / 32; i++) {
-      bytes.set(new Uint8Array(await crypto.subtle.sign('HMAC', hk, enc.encode('stream|' + i))), i * 32);
+      const label = ver === 1 ? 'stream|' + i : `stream|v${ver}|${i}`;
+      bytes.set(new Uint8Array(await crypto.subtle.sign('HMAC', base.hk, enc.encode(label))), i * 32);
     }
+    base.cache.set(ver, bytes);
     return bytes;
   }
 
@@ -202,24 +220,33 @@
     throw new Error('Kon geen code afleiden');
   }
 
-  // Sleutel voor de onthouden lengte: hash van de (dure) PBKDF2-uitvoer met een eigen label.
-  // Niet terug te rekenen naar naam, wachtwoord of de code zelf.
-  async function lengthId(bytes) {
+  // Sleutel voor het geheugen: hash van de (dure) PBKDF2-afleiding met een eigen label.
+  // Niet terug te rekenen naar naam, wachtwoord of de code zelf. Hangt niet van de versie af.
+  async function recordId(bytes1) {
     const label = enc.encode('wachtwoord-maker|lengte|v1|');
     const buf = new Uint8Array(label.length + 32);
-    buf.set(label); buf.set(bytes.subarray(0, 32), label.length);
+    buf.set(label); buf.set(bytes1.subarray(0, 32), label.length);
     const h = new Uint8Array(await crypto.subtle.digest('SHA-256', buf));
     return [...h].map(b => b.toString(16).padStart(2, '0')).join('');
   }
 
-  const STORE = 'wm.lengths';
-  const LENGTHS = [6, 8, 16, 32, 64];
-  function loadLengths() { try { return JSON.parse(localStorage.getItem(STORE)) || {}; } catch { return {}; } }
-  function saveLength(id, len) {
-    try { const m = loadLengths(); m[id] = len; localStorage.setItem(STORE, JSON.stringify(m)); return true; }
-    catch { return false; }
+  // ---------- Geheugen (alleen op dit apparaat) ----------
+
+  const STORE = 'wm.lengths', APPS = 'wm.apps';
+  function loadRecord(id) {
+    try {
+      const v = (JSON.parse(localStorage.getItem(STORE)) || {})[id];
+      if (LENGTHS.includes(v)) return { len: v, ver: 1 };                       // oud formaat
+      if (v && LENGTHS.includes(v.len) && Number.isInteger(v.ver) && v.ver >= 1) return { len: v.len, ver: v.ver };
+    } catch {}
+    return null;
   }
-  const APPS = 'wm.apps';
+  function saveRecord(id, r) {
+    try {
+      let m = {}; try { m = JSON.parse(localStorage.getItem(STORE)) || {}; } catch {}
+      m[id] = r; localStorage.setItem(STORE, JSON.stringify(m)); return true;
+    } catch { return false; }
+  }
   function loadApps() {
     try { const a = JSON.parse(localStorage.getItem(APPS)); return Array.isArray(a) ? a.filter(x => typeof x === 'string').slice(0, 5) : []; }
     catch { return []; }
@@ -231,14 +258,18 @@
     renderRecent();
   }
 
-  const recentBtn = $('recentBtn'), recentMenu = $('recentMenu');
+  // ---------- Uitklapmenu met laatste namen ----------
+
   function renderRecent() {
     const list = loadApps();
     recentBtn.disabled = list.length === 0;
     recentMenu.replaceChildren(...list.map(name => {
       const li = document.createElement('li'), b = document.createElement('button');
       b.type = 'button'; b.textContent = name;
-      b.addEventListener('click', () => { app.value = name; closeMenu(); invalidate(); pw.focus(); });
+      b.addEventListener('click', () => {
+        app.value = name; closeMenu(); invalidate();
+        if (pw.value) scheduleResolve(); else pw.focus();
+      });
       li.appendChild(b); return li;
     }));
     if (!list.length) closeMenu();
@@ -253,11 +284,11 @@
   document.addEventListener('click', (e) => { if (!e.target.closest('.combo')) closeMenu(); });
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !recentMenu.hidden) { closeMenu(); recentBtn.focus(); } });
 
-  // De onthouden lengte van deze combinatie licht op in de rij knoppen.
+  // ---------- Weergave ----------
+
   function markRemembered(len) {
     document.querySelectorAll('.len').forEach(l => l.classList.toggle('remembered', +l.querySelector('input').value === len));
   }
-  function selectLength(len) { document.querySelector(`input[name=len][value="${len}"]`).checked = true; }
 
   function setOutput(v) {
     current = v;
@@ -271,65 +302,119 @@
     say.t = setTimeout(() => (status.textContent = ''), 3000);
   }
 
-  let base = null;      // { bytes, id } van de huidige naam + wachtwoord
-  let touched = false;  // lengte handmatig gekozen sinds naam/wachtwoord veranderde
-
-  function show() {
-    try { setOutput(makeCode(base.bytes, getLen())); }
-    catch (e) { setOutput(''); out.placeholder = 'Fout: ' + e.message; }
+  function refreshUI() {
+    makeBtn.disabled = busy;
+    prevBtn.hidden = !(rec && rec.ver > 1);
+    prevBtn.textContent = rec ? `Vorige versie (${rec.ver - 1})` : '';
+    if (!rec) {
+      makeBtn.textContent = 'Code maken';
+      markRemembered(null);
+      if (!busy && base) hint.textContent = 'Nieuwe combinatie. Kies een lengte en druk op Code maken.';
+      return;
+    }
+    makeBtn.textContent = hidden ? 'Toon code' : 'Nieuwe code maken';
+    markRemembered(rec.len);
+    hint.textContent = `Bekende combinatie: laatste code had lengte ${rec.len} (versie ${rec.ver}). Je kunt de lengte wijzigen of een nieuwe code laten maken.`;
   }
 
-  async function update() {
-    const my = ++run;
-    base = null;
-    hint.textContent = '';
-    markRemembered(null);
-    if (!app.value.trim() || !pw.value) { setOutput(''); out.placeholder = 'Vul eerst naam en wachtwoord in.'; (app.value.trim() ? pw : app).focus(); return; }
-    out.placeholder = 'Berekenen…';
-    setOutput('');
-    makeBtn.disabled = true;
+  async function show() {
+    const my = run;
     try {
-      const bytes = await deriveBase(app.value, pw.value);
-      const id = await lengthId(bytes);
+      const bytes = await getBytes(rec ? rec.ver : 1);
+      const code = makeCode(bytes, getLen());
       if (my !== run) return;
-      base = { bytes, id };
-      const saved = loadLengths()[id];
-      if (touched) {
-        saveLength(id, getLen());       // bewuste keuze van nu wint van de onthouden lengte
-        markRemembered(getLen());
-      } else if (LENGTHS.includes(saved)) {
-        selectLength(saved);
-        markRemembered(saved);
-        hint.textContent = `Lichtgevende knop = laatst gekozen lengte voor deze combinatie (${saved}). Je kunt dit wijzigen.`;
-      }
-      rememberApp(app.value);
-      show();
+      hidden = false;
+      setOutput(code);
     } catch (e) {
       if (my === run) { setOutput(''); out.placeholder = 'Fout: ' + e.message; }
-    } finally {
-      if (my === run) makeBtn.disabled = false;
     }
   }
 
-  function onLengthChange() {
-    touched = true;
-    if (!base) return;            // nog geen geldige combinatie: niets te tonen of te onthouden
-    show();
-    const len = getLen();
-    const ok = saveLength(base.id, len);
-    markRemembered(ok ? len : null);
-    hint.textContent = ok
-      ? `Lengte ${len} onthouden voor deze combinatie op dit apparaat.`
-      : 'Lengte kon niet worden onthouden (opslag niet beschikbaar).';
+  // ---------- Stroom ----------
+
+  // Naam of wachtwoord veranderd: oude code hoort niet meer op het scherm.
+  function invalidate() {
+    run++; base = null; rec = null; hidden = false; busy = false;
+    clearTimeout(timer);
+    hint.textContent = '';
+    setOutput('');
+    out.placeholder = 'Vul naam en wachtwoord in.';
+    refreshUI();
   }
 
-  // Zodra naam of wachtwoord verandert, hoort de oude code niet meer op het scherm.
-  function invalidate() {
-    run++; base = null; touched = false; makeBtn.disabled = false;
+  function scheduleResolve() {
+    clearTimeout(timer);
+    if (!app.value.trim() || !pw.value) return;
+    timer = setTimeout(resolve, 500);
+  }
+
+  // Berekent de combinatie en toont direct de eerder gemaakte code als die bekend is.
+  async function resolve() {
+    clearTimeout(timer);
+    const my = ++run;
+    base = null; rec = null; hidden = false;
     hint.textContent = '';
-    markRemembered(null);
     setOutput('');
-    out.placeholder = 'Druk op Code maken.';
+    if (!app.value.trim() || !pw.value) {
+      out.placeholder = 'Vul eerst naam en wachtwoord in.';
+      (app.value.trim() ? pw : app).focus();
+      refreshUI(); return;
+    }
+    out.placeholder = 'Berekenen…';
+    busy = true; refreshUI();
+    try {
+      const hk = await deriveKey(app.value, pw.value);
+      if (my !== run) return;
+      base = { hk, id: '', cache: new Map() };
+      base.id = await recordId(await getBytes(1));
+      if (my !== run) return;
+      rec = loadRecord(base.id);
+      if (rec) {
+        selectLength(rec.len);
+        await show();
+        if (my !== run) return;
+        rememberApp(app.value);
+      } else {
+        out.placeholder = 'Nieuwe combinatie: druk op Code maken.';
+      }
+    } catch (e) {
+      if (my === run) { setOutput(''); out.placeholder = 'Fout: ' + e.message; }
+    } finally {
+      if (my === run) { busy = false; refreshUI(); }
+    }
+  }
+
+  async function onMake() {
+    if (busy) return;
+    if (!base) { await resolve(); if (!base || rec) return; }   // bekend: resolve toonde de code al
+    if (!rec) {
+      rec = { len: getLen(), ver: 1 };                          // nieuwe combinatie
+      saveRecord(base.id, rec);
+      rememberApp(app.value);
+    } else if (hidden) {
+      hidden = false;                                           // alleen weer tonen
+    } else {
+      rec = { len: getLen(), ver: rec.ver + 1 };                // bewust een nieuwe code
+      saveRecord(base.id, rec);
+    }
+    await show(); refreshUI();
+    if (rec.ver > 1 && !hidden) say(`Nieuwe code gemaakt (versie ${rec.ver}).`);
+  }
+
+  async function onPrev() {
+    if (!rec || rec.ver <= 1) return;
+    rec = { len: getLen(), ver: rec.ver - 1 };
+    saveRecord(base.id, rec);
+    await show(); refreshUI();
+    say(`Terug naar versie ${rec.ver}.`);
+  }
+
+  async function onLengthChange() {
+    if (!base || !rec) return;       // nieuwe combinatie: lengte geldt pas bij Code maken
+    rec = { len: getLen(), ver: rec.ver };
+    const ok = saveRecord(base.id, rec);
+    await show(); refreshUI();
+    if (!ok) hint.textContent = 'Lengte kon niet worden onthouden (opslag niet beschikbaar).';
   }
 
   async function copyText(t) {
@@ -343,15 +428,21 @@
     }
   }
 
-  app.addEventListener('input', invalidate);
-  pw.addEventListener('input', invalidate);
-  $('form').addEventListener('submit', (e) => { e.preventDefault(); update(); });
-  document.querySelectorAll('input[name=len]').forEach(r => r.addEventListener('change', onLengthChange));
+  // ---------- Events ----------
 
-  forgetBtn.addEventListener('click', () => {
-    try { localStorage.removeItem(STORE); localStorage.removeItem(APPS); say('Onthouden lengtes en namen gewist.'); } catch { say('Wissen niet mogelijk.'); }
-    hint.textContent = ''; markRemembered(null); renderRecent();
-  });
+  for (const el of [app, pw]) {
+    el.addEventListener('input', () => { invalidate(); scheduleResolve(); });
+    // Enter toont een bekende code (of maakt een nieuwe combinatie), maar maakt nooit per ongeluk een nieuwe versie.
+    el.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      if (!rec) onMake(); else if (hidden) onMake();
+    });
+  }
+  $('form').addEventListener('submit', (e) => e.preventDefault());
+  makeBtn.addEventListener('click', onMake);
+  prevBtn.addEventListener('click', onPrev);
+  document.querySelectorAll('input[name=len]').forEach(r => r.addEventListener('change', onLengthChange));
 
   toggle.addEventListener('click', () => {
     const show = pw.type === 'password';
@@ -366,12 +457,20 @@
 
   cutBtn.addEventListener('click', async () => {
     if (await copyText(current)) {
-      setOutput(''); out.placeholder = 'Code geknipt. Druk op Code maken voor een nieuwe.';
+      setOutput(''); hidden = true;
+      out.placeholder = 'Code geknipt. Druk op Toon code om hem weer te zien.';
+      refreshUI();
       say('Geknipt: de code staat op het klembord en is van het scherm gewist.');
     } else say('Knippen mislukt; selecteer de code en gebruik Ctrl+X/Ctrl+C.');
   });
 
+  forgetBtn.addEventListener('click', () => {
+    try { localStorage.removeItem(STORE); localStorage.removeItem(APPS); say('Onthouden lengtes, versies en namen gewist.'); } catch { say('Wissen niet mogelijk.'); }
+    invalidate(); renderRecent(); scheduleResolve();
+  });
+
   renderRecent();
+  refreshUI();
 
   if ('serviceWorker' in navigator && location.protocol !== 'file:') {
     navigator.serviceWorker.register('sw.js').catch(() => {});
