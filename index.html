@@ -94,9 +94,18 @@
 <body>
 <main>
   <h1>Wachtwoord Maker</h1>
-  <p class="sub">Zelfde naam + zelfde wachtwoord = dezelfde code, tot je zelf een nieuwe laat maken. Alles gebeurt lokaal in je browser.</p>
+  <p class="sub">Zelfde gebruiker + app + wachtwoord = dezelfde code, tot je zelf een nieuwe laat maken. Alles gebeurt lokaal in je browser.</p>
 
   <form id="form" novalidate>
+  <label for="user">Gebruiker</label>
+  <div class="combo">
+    <div class="row">
+      <input id="user" type="text" autocomplete="off" autocapitalize="words" spellcheck="false" placeholder="bijv. Anna">
+      <button type="button" id="userBtn" aria-haspopup="true" aria-expanded="false" aria-controls="userMenu" aria-label="Eerder gebruikte gebruikers" title="Eerder gebruikte gebruikers" disabled>▾</button>
+    </div>
+    <ul id="userMenu" class="menu" hidden></ul>
+  </div>
+
   <label for="app">Naam van de app</label>
   <div class="combo">
     <div class="row">
@@ -128,7 +137,7 @@
 
   <div class="result">
     <label for="output">Jouw code</label>
-    <textarea id="output" readonly rows="2" placeholder="Vul naam en wachtwoord in."></textarea>
+    <textarea id="output" readonly rows="2" placeholder="Vul gebruiker, app en wachtwoord in."></textarea>
     <div class="actions">
       <button type="button" class="primary" id="copy" disabled>Kopiëren</button>
       <button type="button" id="cut" disabled>Knippen</button>
@@ -136,8 +145,8 @@
     <div id="status" role="status" aria-live="polite"></div>
   </div>
 
-  <p class="note">Je wachtwoord en de code worden nooit opgeslagen of verstuurd. De code wordt elke keer opnieuw berekend uit naam + wachtwoord (PBKDF2-SHA256, 600.000 rondes). Onthoud dus je wachtwoord en de exacte schrijfwijze van de naam (hoofdletters en spaties aan de randen worden genegeerd). "Knippen" kopieert de code en wist hem van het scherm.</p>
-  <p class="note">Wel onthoudt de app op dit apparaat per combinatie van naam + wachtwoord de laatst gekozen lengte en het versienummer van je code, onder een sleutel die niet naar je naam of wachtwoord terug te rekenen is. De laatste 5 appnamen worden leesbaar bewaard voor het uitklapmenu; je wachtwoord nooit. Op een ander apparaat begin je weer bij versie 1: noteer dus het versienummer als je een nieuwe code liet maken, en druk daar zo vaak op "Nieuwe code maken" tot je bij hetzelfde nummer bent. <button type="button" id="forget" class="linkbtn">Wis onthouden gegevens</button></p>
+  <p class="note">De code wordt berekend uit je <strong>gebruiker, de naam van de app en je wachtwoord</strong> (PBKDF2-SHA256, 600.000 rondes). Een andere gebruiker, app of een ander wachtwoord geeft een totaal andere code, ook op hetzelfde apparaat. Je wachtwoord en de codes worden nooit opgeslagen of verstuurd. Onthoud je wachtwoord en de schrijfwijze van gebruiker en app (hoofdletters en spaties aan de randen tellen niet mee). "Knippen" kopieert de code en wist hem van het scherm.</p>
+  <p class="note">Op dit apparaat onthoudt de app leesbaar de gebruikersnamen en per gebruiker de laatste 5 appnamen, plus per combinatie de laatst gekozen lengte en het versienummer (onder een sleutel die niet naar naam of wachtwoord terug te rekenen is). Wie jouw gebruiker kiest ziet dus jouw appnamen, maar nooit je wachtwoord of codes. Op een ander apparaat begin je weer bij versie 1: noteer het versienummer als je een nieuwe code liet maken. <button type="button" id="forget" class="linkbtn">Wis onthouden gegevens</button></p>
 </main>
 
 <script>
@@ -146,6 +155,7 @@
   const app = $('app'), pw = $('pw'), out = $('output'), status = $('status');
   const makeBtn = $('make'), prevBtn = $('prev'), hint = $('lenHint'), forgetBtn = $('forget');
   const copyBtn = $('copy'), cutBtn = $('cut'), toggle = $('toggle');
+  const user = $('user'), userBtn = $('userBtn'), userMenu = $('userMenu');
   const recentBtn = $('recentBtn'), recentMenu = $('recentMenu');
 
   const LOWER = 'abcdefghijkmnopqrstuvwxyz';   // zonder l
@@ -181,10 +191,11 @@
     return null;
   }
 
-  // Eén dure afleiding (PBKDF2, één blok) per naam + wachtwoord.
-  async function deriveKey(name, secret) {
+  // Eén dure afleiding (PBKDF2, één blok) per gebruiker + app + wachtwoord.
+  const norm = (t) => t.trim().toLowerCase().normalize('NFKC');
+  async function deriveKey(who, name, secret) {
     const key = await crypto.subtle.importKey('raw', enc.encode(secret.normalize('NFKC')), 'PBKDF2', false, ['deriveBits']);
-    const salt = enc.encode('wachtwoord-maker|v2|' + name.trim().toLowerCase().normalize('NFKC'));
+    const salt = enc.encode('wachtwoord-maker|v3|' + JSON.stringify([norm(who), norm(name)]));
     const seed = await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt, iterations: ITERATIONS }, key, 256);
     return crypto.subtle.importKey('raw', seed, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
   }
@@ -247,42 +258,73 @@
       m[id] = r; localStorage.setItem(STORE, JSON.stringify(m)); return true;
     } catch { return false; }
   }
-  function loadApps() {
-    try { const a = JSON.parse(localStorage.getItem(APPS)); return Array.isArray(a) ? a.filter(x => typeof x === 'string').slice(0, 5) : []; }
+  const USERS = 'wm.users';
+  function readList(key, max) {
+    try { const a = JSON.parse(localStorage.getItem(key)); return Array.isArray(a) ? a.filter(x => typeof x === 'string').slice(0, max) : []; }
     catch { return []; }
   }
-  function rememberApp(name) {
+  function pushName(list, name, max) {
     const n = name.trim();
-    const list = [n, ...loadApps().filter(x => x.toLowerCase() !== n.toLowerCase())].slice(0, 5);
-    try { localStorage.setItem(APPS, JSON.stringify(list)); } catch {}
-    renderRecent();
+    return [n, ...list.filter(x => norm(x) !== norm(n))].slice(0, max);
+  }
+  const loadUsers = () => readList(USERS, 10);
+  function loadApps(who) {
+    try { const m = JSON.parse(localStorage.getItem(APPS)); const a = m && !Array.isArray(m) ? m[norm(who)] : null; return Array.isArray(a) ? a.filter(x => typeof x === 'string').slice(0, 5) : []; }
+    catch { return []; }
+  }
+  function remember(who, name) {
+    try {
+      localStorage.setItem(USERS, JSON.stringify(pushName(loadUsers(), who, 10)));
+      let m = {}; try { const o = JSON.parse(localStorage.getItem(APPS)); if (o && !Array.isArray(o)) m = o; } catch {}
+      m[norm(who)] = pushName(loadApps(who), name, 5);
+      localStorage.setItem(APPS, JSON.stringify(m));
+    } catch {}
+    renderUsers(); renderApps();
   }
 
-  // ---------- Uitklapmenu met laatste namen ----------
+  // ---------- Uitklapmenu's (gebruikers en laatste appnamen) ----------
 
-  function renderRecent() {
-    const list = loadApps();
-    recentBtn.disabled = list.length === 0;
-    recentMenu.replaceChildren(...list.map(name => {
+  const menus = [[userBtn, userMenu], [recentBtn, recentMenu]];
+  function closeMenus() { for (const [btn, menu] of menus) { menu.hidden = true; btn.setAttribute('aria-expanded', 'false'); } }
+  function fillMenu(btn, menu, list, onPick) {
+    btn.disabled = list.length === 0;
+    menu.replaceChildren(...list.map(name => {
       const li = document.createElement('li'), b = document.createElement('button');
       b.type = 'button'; b.textContent = name;
-      b.addEventListener('click', () => {
-        app.value = name; closeMenu(); invalidate();
-        if (pw.value) scheduleResolve(); else pw.focus();
-      });
+      b.addEventListener('click', () => { closeMenus(); onPick(name); });
       li.appendChild(b); return li;
     }));
-    if (!list.length) closeMenu();
+    if (!list.length) closeMenus();
   }
-  function closeMenu() { recentMenu.hidden = true; recentBtn.setAttribute('aria-expanded', 'false'); }
-  recentBtn.addEventListener('click', () => {
-    const open = recentMenu.hidden;
-    recentMenu.hidden = !open;
-    recentBtn.setAttribute('aria-expanded', String(open));
-    if (open) recentMenu.querySelector('button')?.focus();
+  for (const [btn, menu] of menus) {
+    btn.addEventListener('click', () => {
+      const open = menu.hidden;
+      closeMenus();
+      menu.hidden = !open;
+      btn.setAttribute('aria-expanded', String(open));
+      if (open) menu.querySelector('button')?.focus();
+    });
+  }
+  document.addEventListener('click', (e) => { if (!e.target.closest('.combo')) closeMenus(); });
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    const open = menus.find(([, m]) => !m.hidden);
+    if (open) { closeMenus(); open[0].focus(); }
   });
-  document.addEventListener('click', (e) => { if (!e.target.closest('.combo')) closeMenu(); });
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !recentMenu.hidden) { closeMenu(); recentBtn.focus(); } });
+
+  function renderUsers() {
+    fillMenu(userBtn, userMenu, loadUsers(), (name) => {
+      // Van gebruiker wisselen: velden van de vorige gebruiker leegmaken, zodat die niet in beeld blijft.
+      user.value = name; app.value = ''; pw.value = '';
+      invalidate(); renderApps(); app.focus();
+    });
+  }
+  function renderApps() {
+    fillMenu(recentBtn, recentMenu, user.value.trim() ? loadApps(user.value) : [], (name) => {
+      app.value = name; invalidate();
+      if (pw.value) scheduleResolve(); else pw.focus();
+    });
+  }
 
   // ---------- Weergave ----------
 
@@ -338,13 +380,15 @@
     clearTimeout(timer);
     hint.textContent = '';
     setOutput('');
-    out.placeholder = 'Vul naam en wachtwoord in.';
+    out.placeholder = 'Vul gebruiker, app en wachtwoord in.';
     refreshUI();
   }
 
+  const ready = () => user.value.trim() && app.value.trim() && pw.value;
+
   function scheduleResolve() {
     clearTimeout(timer);
-    if (!app.value.trim() || !pw.value) return;
+    if (!ready()) return;
     timer = setTimeout(resolve, 500);
   }
 
@@ -355,15 +399,15 @@
     base = null; rec = null; hidden = false;
     hint.textContent = '';
     setOutput('');
-    if (!app.value.trim() || !pw.value) {
-      out.placeholder = 'Vul eerst naam en wachtwoord in.';
-      (app.value.trim() ? pw : app).focus();
+    if (!ready()) {
+      out.placeholder = 'Vul eerst gebruiker, app en wachtwoord in.';
+      (!user.value.trim() ? user : !app.value.trim() ? app : pw).focus();
       refreshUI(); return;
     }
     out.placeholder = 'Berekenen…';
     busy = true; refreshUI();
     try {
-      const hk = await deriveKey(app.value, pw.value);
+      const hk = await deriveKey(user.value, app.value, pw.value);
       if (my !== run) return;
       base = { hk, id: '', cache: new Map() };
       base.id = await recordId(await getBytes(1));
@@ -373,7 +417,7 @@
         selectLength(rec.len);
         await show();
         if (my !== run) return;
-        rememberApp(app.value);
+        remember(user.value, app.value);
       } else {
         out.placeholder = 'Nieuwe combinatie: druk op Code maken.';
       }
@@ -390,7 +434,7 @@
     if (!rec) {
       rec = { len: getLen(), ver: 1 };                          // nieuwe combinatie
       saveRecord(base.id, rec);
-      rememberApp(app.value);
+      remember(user.value, app.value);
     } else if (hidden) {
       hidden = false;                                           // alleen weer tonen
     } else {
@@ -430,8 +474,8 @@
 
   // ---------- Events ----------
 
-  for (const el of [app, pw]) {
-    el.addEventListener('input', () => { invalidate(); scheduleResolve(); });
+  for (const el of [user, app, pw]) {
+    el.addEventListener('input', () => { invalidate(); if (el === user) renderApps(); scheduleResolve(); });
     // Enter toont een bekende code (of maakt een nieuwe combinatie), maar maakt nooit per ongeluk een nieuwe versie.
     el.addEventListener('keydown', (e) => {
       if (e.key !== 'Enter') return;
@@ -465,11 +509,11 @@
   });
 
   forgetBtn.addEventListener('click', () => {
-    try { localStorage.removeItem(STORE); localStorage.removeItem(APPS); say('Onthouden lengtes, versies en namen gewist.'); } catch { say('Wissen niet mogelijk.'); }
-    invalidate(); renderRecent(); scheduleResolve();
+    try { localStorage.removeItem(STORE); localStorage.removeItem(APPS); localStorage.removeItem(USERS); say('Onthouden lengtes, versies en namen en gebruikers gewist.'); } catch { say('Wissen niet mogelijk.'); }
+    invalidate(); renderUsers(); renderApps(); scheduleResolve();
   });
 
-  renderRecent();
+  renderUsers(); renderApps();
   refreshUI();
 
   if ('serviceWorker' in navigator && location.protocol !== 'file:') {
