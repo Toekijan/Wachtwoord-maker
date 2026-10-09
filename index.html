@@ -69,6 +69,7 @@
     font: 1.05rem/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     word-break: break-all; resize: vertical; color: var(--text);
   }
+  button.wide { width: 100%; margin-top: 8px; font-size: 1.05rem; }
   .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
   #status { min-height: 1.4em; margin-top: 10px; color: var(--ok); font-size: .9rem; }
   .hint { min-height: 1.4em; margin: 8px 0 0; color: var(--muted); font-size: .85rem; }
@@ -81,6 +82,7 @@
   <h1>Wachtwoord Maker</h1>
   <p class="sub">Zelfde naam + zelfde wachtwoord = altijd dezelfde code. Alles gebeurt lokaal in je browser.</p>
 
+  <form id="form" novalidate>
   <label for="app">Naam van de app</label>
   <input id="app" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="bijv. Netflix">
 
@@ -100,9 +102,12 @@
   </div>
   <p id="lenHint" class="hint" role="status" aria-live="polite"></p>
 
+  <button type="submit" class="primary wide" id="make">Code maken</button>
+  </form>
+
   <div class="result">
     <label for="output">Jouw code</label>
-    <textarea id="output" readonly rows="2" placeholder="Vul naam en wachtwoord in…"></textarea>
+    <textarea id="output" readonly rows="2" placeholder="Vul naam en wachtwoord in en druk op Code maken."></textarea>
     <div class="actions">
       <button type="button" class="primary" id="copy" disabled>Kopiëren</button>
       <button type="button" id="cut" disabled>Knippen</button>
@@ -119,7 +124,7 @@
 (() => {
   const $ = (id) => document.getElementById(id);
   const app = $('app'), pw = $('pw'), out = $('output'), status = $('status');
-  const hint = $('lenHint'), forgetBtn = $('forget');
+  const makeBtn = $('make'), hint = $('lenHint'), forgetBtn = $('forget');
   const copyBtn = $('copy'), cutBtn = $('cut'), pasteBtn = $('paste'), toggle = $('toggle');
 
   const LOWER = 'abcdefghijkmnopqrstuvwxyz';   // zonder l
@@ -128,10 +133,10 @@
   const SYMBOL = '!@#$%^&*-_+=?';
   const ALL = LOWER + UPPER + DIGIT + SYMBOL;
   const ITERATIONS = 600000;
+  const STREAM_BYTES = 4096, MAX_ATTEMPTS = 250;
   const enc = new TextEncoder();
 
   let run = 0;          // voorkomt dat een oud (traag) resultaat een nieuwer overschrijft
-  let timer = null;
   let current = '';
 
   const getLen = () => +document.querySelector('input[name=len]:checked').value;
@@ -146,19 +151,26 @@
     return null;
   }
 
-  // Eén dure afleiding per naam + wachtwoord. De lengte hoort NIET in de salt,
-  // zodat kortere varianten het begin zijn van langere en wisselen van lengte direct gaat.
+  // Eén dure afleiding (PBKDF2, één blok) per naam + wachtwoord, daarna goedkoop uitgerekt tot
+  // een reeks bytes met HMAC-SHA256. De lengte hoort NIET in de afleiding, dus wisselen van
+  // lengte gaat direct.
   async function deriveBase(name, secret) {
     const key = await crypto.subtle.importKey('raw', enc.encode(secret.normalize('NFKC')), 'PBKDF2', false, ['deriveBits']);
-    const salt = enc.encode('wachtwoord-maker|v1|' + name.trim().toLowerCase().normalize('NFKC'));
-    const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt, iterations: ITERATIONS }, key, 8 * 1024);
-    return new Uint8Array(bits);
+    const salt = enc.encode('wachtwoord-maker|v2|' + name.trim().toLowerCase().normalize('NFKC'));
+    const seed = await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt, iterations: ITERATIONS }, key, 256);
+    const hk = await crypto.subtle.importKey('raw', seed, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+    const bytes = new Uint8Array(STREAM_BYTES);
+    for (let i = 0; i < STREAM_BYTES / 32; i++) {
+      bytes.set(new Uint8Array(await crypto.subtle.sign('HMAC', hk, enc.encode('stream|' + i))), i * 32);
+    }
+    return bytes;
   }
 
-  // Deterministisch: bij een ontbrekende tekensoort pakken we het volgende stuk uit dezelfde reeks.
+  // Deterministisch: mist de eerste poging een tekensoort, dan volgt de volgende poging
+  // verderop in dezelfde reeks. Genoeg pogingen, ook voor 6 tekens (kans per poging ~7%).
   function makeCode(bytes, length) {
-    for (let attempt = 0; attempt < 8; attempt++) {
-      const state = { i: attempt * 128 };
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+      const state = { i: attempt * 16 };
       const chars = [];
       for (let k = 0; k < length; k++) {
         const c = pick(bytes, state, ALL);
@@ -204,6 +216,7 @@
   }
 
   let base = null;      // { bytes, id } van de huidige naam + wachtwoord
+  let touched = false;  // lengte handmatig gekozen sinds naam/wachtwoord veranderde
 
   function show() {
     try { setOutput(makeCode(base.bytes, getLen())); }
@@ -214,26 +227,32 @@
     const my = ++run;
     base = null;
     hint.textContent = '';
-    if (!app.value.trim() || !pw.value) { setOutput(''); out.placeholder = 'Vul naam en wachtwoord in…'; return; }
+    if (!app.value.trim() || !pw.value) { setOutput(''); out.placeholder = 'Vul eerst naam en wachtwoord in.'; (app.value.trim() ? pw : app).focus(); return; }
     out.placeholder = 'Berekenen…';
     setOutput('');
+    makeBtn.disabled = true;
     try {
       const bytes = await deriveBase(app.value, pw.value);
       const id = await lengthId(bytes);
       if (my !== run) return;
       base = { bytes, id };
       const saved = loadLengths()[id];
-      if (LENGTHS.includes(saved)) {
+      if (touched) {
+        saveLength(id, getLen());       // bewuste keuze van nu wint van de onthouden lengte
+      } else if (LENGTHS.includes(saved)) {
         selectLength(saved);
         hint.textContent = `Laatst gekozen lengte voor deze combinatie: ${saved}. Je kunt dit wijzigen.`;
       }
       show();
     } catch (e) {
       if (my === run) { setOutput(''); out.placeholder = 'Fout: ' + e.message; }
+    } finally {
+      if (my === run) makeBtn.disabled = false;
     }
   }
 
   function onLengthChange() {
+    touched = true;
     if (!base) return;            // nog geen geldige combinatie: niets te tonen of te onthouden
     show();
     const len = getLen();
@@ -242,7 +261,13 @@
       : 'Lengte kon niet worden onthouden (opslag niet beschikbaar).';
   }
 
-  function schedule() { clearTimeout(timer); timer = setTimeout(update, 250); }
+  // Zodra naam of wachtwoord verandert, hoort de oude code niet meer op het scherm.
+  function invalidate() {
+    run++; base = null; touched = false; makeBtn.disabled = false;
+    hint.textContent = '';
+    setOutput('');
+    out.placeholder = 'Druk op Code maken.';
+  }
 
   async function copyText(t) {
     try { await navigator.clipboard.writeText(t); return true; }
@@ -255,8 +280,9 @@
     }
   }
 
-  app.addEventListener('input', schedule);
-  pw.addEventListener('input', schedule);
+  app.addEventListener('input', invalidate);
+  pw.addEventListener('input', invalidate);
+  $('form').addEventListener('submit', (e) => { e.preventDefault(); update(); });
   document.querySelectorAll('input[name=len]').forEach(r => r.addEventListener('change', onLengthChange));
 
   forgetBtn.addEventListener('click', () => {
@@ -277,7 +303,7 @@
 
   cutBtn.addEventListener('click', async () => {
     if (await copyText(current)) {
-      setOutput(''); out.placeholder = 'Code geknipt. Pas iets aan om hem opnieuw te maken.';
+      setOutput(''); out.placeholder = 'Code geknipt. Druk op Code maken voor een nieuwe.';
       say('Geknipt: de code staat op het klembord en is van het scherm gewist.');
     } else say('Knippen mislukt; selecteer de code en gebruik Ctrl+X/Ctrl+C.');
   });
@@ -286,7 +312,7 @@
     try {
       const t = await navigator.clipboard.readText();
       if (!t) return say('Klembord is leeg.');
-      pw.value = t; schedule(); say('Geplakt in het wachtwoordveld.');
+      pw.value = t; invalidate(); say('Geplakt in het wachtwoordveld.');
     } catch { say('Plakken niet toegestaan; klik in het veld en gebruik Ctrl+V.'); }
   });
 
