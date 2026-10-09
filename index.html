@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Wachtwoord Maker</title>
+<style>
+  :root {
+    --bg: #f4f6fa; --card: #ffffff; --text: #1b2330; --muted: #5d6b82;
+    --border: #cfd7e3; --accent: #1f5fd1; --accent-text: #ffffff;
+    --ok: #17803d; --code-bg: #eef2f8;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #11151c; --card: #1a202b; --text: #e8edf5; --muted: #9aa8bd;
+      --border: #2f3a4b; --accent: #5b94f5; --accent-text: #0b1220;
+      --ok: #4cc27a; --code-bg: #121820;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 24px 16px; background: var(--bg); color: var(--text);
+    font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  main {
+    max-width: 520px; margin: 0 auto; background: var(--card);
+    border: 1px solid var(--border); border-radius: 14px; padding: 24px;
+  }
+  h1 { font-size: 1.4rem; margin: 0 0 4px; }
+  p.sub { margin: 0 0 20px; color: var(--muted); font-size: .9rem; }
+  label { display: block; font-weight: 600; margin: 16px 0 6px; }
+  input[type=text], input[type=password] {
+    width: 100%; padding: 11px 12px; font: inherit; color: var(--text);
+    background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+  }
+  input:focus-visible, button:focus-visible, .len input:focus-visible + span {
+    outline: 3px solid var(--accent); outline-offset: 2px;
+  }
+  .row { display: flex; gap: 8px; }
+  .row input { flex: 1; min-width: 0; }
+  button {
+    font: inherit; font-weight: 600; cursor: pointer; padding: 10px 14px;
+    border-radius: 8px; border: 1px solid var(--border);
+    background: var(--card); color: var(--text);
+  }
+  button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  .lengths { display: flex; flex-wrap: wrap; gap: 8px; }
+  .len { position: relative; }
+  .len input { position: absolute; opacity: 0; inset: 0; cursor: pointer; }
+  .len span {
+    display: block; padding: 9px 16px; border: 1px solid var(--border);
+    border-radius: 8px; font-weight: 600; background: var(--bg);
+  }
+  .len input:checked + span { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+  .result { margin-top: 24px; }
+  #output {
+    width: 100%; min-height: 3.2em; padding: 12px; border-radius: 8px;
+    background: var(--code-bg); border: 1px solid var(--border);
+    font: 1.05rem/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    word-break: break-all; resize: vertical; color: var(--text);
+  }
+  .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+  #status { min-height: 1.4em; margin-top: 10px; color: var(--ok); font-size: .9rem; }
+  .note { margin-top: 20px; color: var(--muted); font-size: .8rem; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Wachtwoord Maker</h1>
+  <p class="sub">Zelfde naam + zelfde wachtwoord = altijd dezelfde code. Alles gebeurt lokaal in je browser.</p>
+
+  <label for="app">Naam van de app</label>
+  <input id="app" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="bijv. Netflix">
+
+  <label for="pw">Zelfverzonnen wachtwoord</label>
+  <div class="row">
+    <input id="pw" type="password" autocomplete="off" spellcheck="false" placeholder="Jouw geheime wachtwoord">
+    <button type="button" id="toggle" aria-pressed="false">Toon</button>
+  </div>
+
+  <label id="lenLabel">Lengte van de code</label>
+  <div class="lengths" role="radiogroup" aria-labelledby="lenLabel">
+    <label class="len"><input type="radio" name="len" value="6"><span>6</span></label>
+    <label class="len"><input type="radio" name="len" value="8"><span>8</span></label>
+    <label class="len"><input type="radio" name="len" value="16" checked><span>16</span></label>
+    <label class="len"><input type="radio" name="len" value="32"><span>32</span></label>
+    <label class="len"><input type="radio" name="len" value="64"><span>64</span></label>
+  </div>
+
+  <div class="result">
+    <label for="output">Jouw code</label>
+    <textarea id="output" readonly rows="2" placeholder="Vul naam en wachtwoord in…"></textarea>
+    <div class="actions">
+      <button type="button" class="primary" id="copy" disabled>Kopiëren</button>
+      <button type="button" id="cut" disabled>Knippen</button>
+      <button type="button" id="paste">Plakken in wachtwoord</button>
+    </div>
+    <div id="status" role="status" aria-live="polite"></div>
+  </div>
+
+  <p class="note">Er wordt niets opgeslagen of verstuurd. De code wordt elke keer opnieuw berekend uit naam + wachtwoord (PBKDF2-SHA256, 600.000 rondes). Onthoud dus je wachtwoord en de exacte schrijfwijze van de naam (hoofdletters en spaties aan de randen worden genegeerd). "Knippen" kopieert de code en wist hem van het scherm.</p>
+</main>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const app = $('app'), pw = $('pw'), out = $('output'), status = $('status');
+  const copyBtn = $('copy'), cutBtn = $('cut'), pasteBtn = $('paste'), toggle = $('toggle');
+
+  const LOWER = 'abcdefghijkmnopqrstuvwxyz';   // zonder l
+  const UPPER = 'ABCDEFGHJKLMNPQRSTUVWXYZ';    // zonder I, O
+  const DIGIT = '23456789';                    // zonder 0, 1
+  const SYMBOL = '!@#$%^&*-_+=?';
+  const ALL = LOWER + UPPER + DIGIT + SYMBOL;
+  const ITERATIONS = 600000;
+  const enc = new TextEncoder();
+
+  let run = 0;          // voorkomt dat een oud (traag) resultaat een nieuwer overschrijft
+  let timer = null;
+  let current = '';
+
+  const getLen = () => +document.querySelector('input[name=len]:checked').value;
+
+  // Rejection sampling: geen modulo-bias. Retourneert null als de bytes op zijn.
+  function pick(bytes, state, set) {
+    const limit = 256 - (256 % set.length);
+    while (state.i < bytes.length) {
+      const b = bytes[state.i++];
+      if (b < limit) return set[b % set.length];
+    }
+    return null;
+  }
+
+  async function derive(name, secret, length) {
+    const key = await crypto.subtle.importKey('raw', enc.encode(secret.normalize('NFKC')), 'PBKDF2', false, ['deriveBits']);
+    const salt = enc.encode('wachtwoord-maker|v1|' + name.trim().toLowerCase().normalize('NFKC'));
+    // Eén dure afleiding; lengte hoort NIET in de salt, zodat 6/8/16/... kortere/langere varianten zijn van dezelfde reeks.
+    const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt, iterations: ITERATIONS }, key, 8 * 1024);
+    const bytes = new Uint8Array(bits);
+
+    // Deterministisch: bij ontbrekende tekensoort pakken we het volgende stuk uit dezelfde reeks.
+    const needAll = length >= 6;
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const state = { i: attempt * 128 };
+      const chars = [];
+      for (let k = 0; k < length; k++) {
+        const c = pick(bytes, state, ALL);
+        if (c === null) break;
+        chars.push(c);
+      }
+      if (chars.length < length) continue;
+      const s = chars.join('');
+      const ok = !needAll || ([LOWER, UPPER, DIGIT, SYMBOL].every(set => [...s].some(ch => set.includes(ch))));
+      if (ok) return s;
+    }
+    throw new Error('Kon geen code afleiden');
+  }
+
+  function setOutput(v) {
+    current = v;
+    out.value = v;
+    copyBtn.disabled = cutBtn.disabled = !v;
+  }
+
+  function say(msg) {
+    status.textContent = msg;
+    clearTimeout(say.t);
+    say.t = setTimeout(() => (status.textContent = ''), 3000);
+  }
+
+  async function update() {
+    const my = ++run;
+    if (!app.value.trim() || !pw.value) { setOutput(''); out.placeholder = 'Vul naam en wachtwoord in…'; return; }
+    out.placeholder = 'Berekenen…';
+    setOutput('');
+    try {
+      const code = await derive(app.value, pw.value, getLen());
+      if (my === run) setOutput(code);
+    } catch (e) {
+      if (my === run) { setOutput(''); out.placeholder = 'Fout: ' + e.message; }
+    }
+  }
+
+  function schedule() { clearTimeout(timer); timer = setTimeout(update, 250); }
+
+  async function copyText(t) {
+    try { await navigator.clipboard.writeText(t); return true; }
+    catch {
+      out.removeAttribute('readonly'); out.select();
+      let ok = false;
+      try { ok = document.execCommand('copy'); } catch {}
+      out.setAttribute('readonly', ''); out.setSelectionRange(0, 0);
+      return ok;
+    }
+  }
+
+  app.addEventListener('input', schedule);
+  pw.addEventListener('input', schedule);
+  document.querySelectorAll('input[name=len]').forEach(r => r.addEventListener('change', update));
+
+  toggle.addEventListener('click', () => {
+    const show = pw.type === 'password';
+    pw.type = show ? 'text' : 'password';
+    toggle.textContent = show ? 'Verberg' : 'Toon';
+    toggle.setAttribute('aria-pressed', String(show));
+  });
+
+  copyBtn.addEventListener('click', async () => {
+    say((await copyText(current)) ? 'Gekopieerd.' : 'Kopiëren mislukt; selecteer de code en gebruik Ctrl+C.');
+  });
+
+  cutBtn.addEventListener('click', async () => {
+    if (await copyText(current)) {
+      setOutput(''); out.placeholder = 'Code geknipt. Pas iets aan om hem opnieuw te maken.';
+      say('Geknipt: de code staat op het klembord en is van het scherm gewist.');
+    } else say('Knippen mislukt; selecteer de code en gebruik Ctrl+X/Ctrl+C.');
+  });
+
+  pasteBtn.addEventListener('click', async () => {
+    try {
+      const t = await navigator.clipboard.readText();
+      if (!t) return say('Klembord is leeg.');
+      pw.value = t; schedule(); say('Geplakt in het wachtwoordveld.');
+    } catch { say('Plakken niet toegestaan; klik in het veld en gebruik Ctrl+V.'); }
+  });
+
+  if (!(window.crypto && crypto.subtle)) {
+    out.placeholder = 'Deze browser/omgeving ondersteunt geen Web Crypto (open via https of file://).';
+  }
+})();
+</script>
+</body>
+</html>
