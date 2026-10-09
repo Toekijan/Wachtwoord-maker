@@ -61,6 +61,10 @@
     display: block; padding: 9px 16px; border: 1px solid var(--border);
     border-radius: 8px; font-weight: 600; background: var(--bg);
   }
+  .len.remembered span { box-shadow: 0 0 0 3px var(--ok), 0 0 14px var(--ok); border-color: var(--ok); animation: glow 1.4s ease-out 2; }
+  .len.remembered span::after { content: " ★"; }
+  @keyframes glow { 50% { box-shadow: 0 0 0 6px var(--ok), 0 0 22px var(--ok); } }
+  @media (prefers-reduced-motion: reduce) { .len.remembered span { animation: none; } }
   .len input:checked + span { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
   .result { margin-top: 24px; }
   #output {
@@ -72,6 +76,15 @@
   button.wide { width: 100%; margin-top: 8px; font-size: 1.05rem; }
   .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
   #status { min-height: 1.4em; margin-top: 10px; color: var(--ok); font-size: .9rem; }
+  .combo { position: relative; }
+  .menu {
+    position: absolute; left: 0; right: 0; top: calc(100% + 4px); z-index: 10; margin: 0; padding: 4px;
+    list-style: none; background: var(--card); border: 1px solid var(--border); border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0,0,0,.18);
+  }
+  .menu[hidden] { display: none; }
+  .menu button { width: 100%; text-align: left; border: 0; background: none; font-weight: 500; }
+  .menu button:hover, .menu button:focus-visible { background: var(--code-bg); }
   .hint { min-height: 1.4em; margin: 8px 0 0; color: var(--muted); font-size: .85rem; }
   .linkbtn { min-height: 0; padding: 0; border: 0; background: none; color: var(--accent); text-decoration: underline; font-weight: 400; font-size: inherit; }
   .note { margin-top: 20px; color: var(--muted); font-size: .8rem; }
@@ -84,7 +97,13 @@
 
   <form id="form" novalidate>
   <label for="app">Naam van de app</label>
-  <input id="app" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="bijv. Netflix">
+  <div class="combo">
+    <div class="row">
+      <input id="app" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="bijv. Netflix">
+      <button type="button" id="recentBtn" aria-haspopup="true" aria-expanded="false" aria-controls="recentMenu" aria-label="Laatst gebruikte namen" title="Laatst gebruikte namen" disabled>▾</button>
+    </div>
+    <ul id="recentMenu" class="menu" hidden></ul>
+  </div>
 
   <label for="pw">Zelfverzonnen wachtwoord</label>
   <div class="row">
@@ -111,13 +130,12 @@
     <div class="actions">
       <button type="button" class="primary" id="copy" disabled>Kopiëren</button>
       <button type="button" id="cut" disabled>Knippen</button>
-      <button type="button" id="paste">Plakken in wachtwoord</button>
     </div>
     <div id="status" role="status" aria-live="polite"></div>
   </div>
 
   <p class="note">Je wachtwoord en de code worden nooit opgeslagen of verstuurd. De code wordt elke keer opnieuw berekend uit naam + wachtwoord (PBKDF2-SHA256, 600.000 rondes). Onthoud dus je wachtwoord en de exacte schrijfwijze van de naam (hoofdletters en spaties aan de randen worden genegeerd). "Knippen" kopieert de code en wist hem van het scherm.</p>
-  <p class="note">Wel onthoudt de app op dit apparaat welke lengte je het laatst koos voor een combinatie van naam + wachtwoord. Dat staat onder een sleutel die niet naar je naam of wachtwoord terug te rekenen is. Op een ander apparaat kies je de lengte dus één keer opnieuw. <button type="button" id="forget" class="linkbtn">Wis onthouden lengtes</button></p>
+  <p class="note">Wel onthoudt de app op dit apparaat welke lengte je het laatst koos voor een combinatie van naam + wachtwoord, onder een sleutel die niet naar je naam of wachtwoord terug te rekenen is. De laatste 5 appnamen worden leesbaar bewaard voor het uitklapmenu; je wachtwoord nooit. Op een ander apparaat kies je de lengte dus één keer opnieuw. <button type="button" id="forget" class="linkbtn">Wis onthouden lengtes en namen</button></p>
 </main>
 
 <script>
@@ -125,7 +143,7 @@
   const $ = (id) => document.getElementById(id);
   const app = $('app'), pw = $('pw'), out = $('output'), status = $('status');
   const makeBtn = $('make'), hint = $('lenHint'), forgetBtn = $('forget');
-  const copyBtn = $('copy'), cutBtn = $('cut'), pasteBtn = $('paste'), toggle = $('toggle');
+  const copyBtn = $('copy'), cutBtn = $('cut'), toggle = $('toggle');
 
   const LOWER = 'abcdefghijkmnopqrstuvwxyz';   // zonder l
   const UPPER = 'ABCDEFGHJKLMNPQRSTUVWXYZ';    // zonder I, O
@@ -201,6 +219,44 @@
     try { const m = loadLengths(); m[id] = len; localStorage.setItem(STORE, JSON.stringify(m)); return true; }
     catch { return false; }
   }
+  const APPS = 'wm.apps';
+  function loadApps() {
+    try { const a = JSON.parse(localStorage.getItem(APPS)); return Array.isArray(a) ? a.filter(x => typeof x === 'string').slice(0, 5) : []; }
+    catch { return []; }
+  }
+  function rememberApp(name) {
+    const n = name.trim();
+    const list = [n, ...loadApps().filter(x => x.toLowerCase() !== n.toLowerCase())].slice(0, 5);
+    try { localStorage.setItem(APPS, JSON.stringify(list)); } catch {}
+    renderRecent();
+  }
+
+  const recentBtn = $('recentBtn'), recentMenu = $('recentMenu');
+  function renderRecent() {
+    const list = loadApps();
+    recentBtn.disabled = list.length === 0;
+    recentMenu.replaceChildren(...list.map(name => {
+      const li = document.createElement('li'), b = document.createElement('button');
+      b.type = 'button'; b.textContent = name;
+      b.addEventListener('click', () => { app.value = name; closeMenu(); invalidate(); pw.focus(); });
+      li.appendChild(b); return li;
+    }));
+    if (!list.length) closeMenu();
+  }
+  function closeMenu() { recentMenu.hidden = true; recentBtn.setAttribute('aria-expanded', 'false'); }
+  recentBtn.addEventListener('click', () => {
+    const open = recentMenu.hidden;
+    recentMenu.hidden = !open;
+    recentBtn.setAttribute('aria-expanded', String(open));
+    if (open) recentMenu.querySelector('button')?.focus();
+  });
+  document.addEventListener('click', (e) => { if (!e.target.closest('.combo')) closeMenu(); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !recentMenu.hidden) { closeMenu(); recentBtn.focus(); } });
+
+  // De onthouden lengte van deze combinatie licht op in de rij knoppen.
+  function markRemembered(len) {
+    document.querySelectorAll('.len').forEach(l => l.classList.toggle('remembered', +l.querySelector('input').value === len));
+  }
   function selectLength(len) { document.querySelector(`input[name=len][value="${len}"]`).checked = true; }
 
   function setOutput(v) {
@@ -227,6 +283,7 @@
     const my = ++run;
     base = null;
     hint.textContent = '';
+    markRemembered(null);
     if (!app.value.trim() || !pw.value) { setOutput(''); out.placeholder = 'Vul eerst naam en wachtwoord in.'; (app.value.trim() ? pw : app).focus(); return; }
     out.placeholder = 'Berekenen…';
     setOutput('');
@@ -239,10 +296,13 @@
       const saved = loadLengths()[id];
       if (touched) {
         saveLength(id, getLen());       // bewuste keuze van nu wint van de onthouden lengte
+        markRemembered(getLen());
       } else if (LENGTHS.includes(saved)) {
         selectLength(saved);
-        hint.textContent = `Laatst gekozen lengte voor deze combinatie: ${saved}. Je kunt dit wijzigen.`;
+        markRemembered(saved);
+        hint.textContent = `Lichtgevende knop = laatst gekozen lengte voor deze combinatie (${saved}). Je kunt dit wijzigen.`;
       }
+      rememberApp(app.value);
       show();
     } catch (e) {
       if (my === run) { setOutput(''); out.placeholder = 'Fout: ' + e.message; }
@@ -256,7 +316,9 @@
     if (!base) return;            // nog geen geldige combinatie: niets te tonen of te onthouden
     show();
     const len = getLen();
-    hint.textContent = saveLength(base.id, len)
+    const ok = saveLength(base.id, len);
+    markRemembered(ok ? len : null);
+    hint.textContent = ok
       ? `Lengte ${len} onthouden voor deze combinatie op dit apparaat.`
       : 'Lengte kon niet worden onthouden (opslag niet beschikbaar).';
   }
@@ -265,6 +327,7 @@
   function invalidate() {
     run++; base = null; touched = false; makeBtn.disabled = false;
     hint.textContent = '';
+    markRemembered(null);
     setOutput('');
     out.placeholder = 'Druk op Code maken.';
   }
@@ -286,8 +349,8 @@
   document.querySelectorAll('input[name=len]').forEach(r => r.addEventListener('change', onLengthChange));
 
   forgetBtn.addEventListener('click', () => {
-    try { localStorage.removeItem(STORE); say('Onthouden lengtes gewist.'); } catch { say('Wissen niet mogelijk.'); }
-    hint.textContent = '';
+    try { localStorage.removeItem(STORE); localStorage.removeItem(APPS); say('Onthouden lengtes en namen gewist.'); } catch { say('Wissen niet mogelijk.'); }
+    hint.textContent = ''; markRemembered(null); renderRecent();
   });
 
   toggle.addEventListener('click', () => {
@@ -308,13 +371,7 @@
     } else say('Knippen mislukt; selecteer de code en gebruik Ctrl+X/Ctrl+C.');
   });
 
-  pasteBtn.addEventListener('click', async () => {
-    try {
-      const t = await navigator.clipboard.readText();
-      if (!t) return say('Klembord is leeg.');
-      pw.value = t; invalidate(); say('Geplakt in het wachtwoordveld.');
-    } catch { say('Plakken niet toegestaan; klik in het veld en gebruik Ctrl+V.'); }
-  });
+  renderRecent();
 
   if ('serviceWorker' in navigator && location.protocol !== 'file:') {
     navigator.serviceWorker.register('sw.js').catch(() => {});
