@@ -74,6 +74,10 @@
     word-break: break-all; resize: vertical; color: var(--text);
   }
   button.wide { width: 100%; margin-top: 8px; font-size: 1.05rem; }
+  .stepper { display: flex; align-items: center; gap: 12px; margin-top: 14px; font-weight: 600; }
+  .stepper span { flex: 1; }
+  .stepper button { min-width: 44px; font-size: 1.2rem; }
+  .stepper output { min-width: 2ch; text-align: center; font-size: 1.1rem; }
   button[hidden] { display: none; }
   .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
   #status { min-height: 1.4em; margin-top: 10px; color: var(--ok); font-size: .9rem; }
@@ -131,8 +135,14 @@
   </div>
   <p id="lenHint" class="hint" role="status" aria-live="polite"></p>
 
+  <div class="stepper" role="group" aria-labelledby="verLabel">
+    <span id="verLabel">Versie van de code</span>
+    <button type="button" id="verDown" aria-label="Vorige versie">−</button>
+    <output id="verNum" aria-live="polite">1</output>
+    <button type="button" id="verUp" aria-label="Volgende versie">+</button>
+  </div>
+
   <button type="button" class="primary wide" id="make">Code maken</button>
-  <button type="button" class="wide" id="prev" hidden>Vorige versie</button>
   </form>
 
   <div class="result">
@@ -142,18 +152,20 @@
       <button type="button" class="primary" id="copy" disabled>Kopiëren</button>
       <button type="button" id="cut" disabled>Knippen</button>
     </div>
+    <p id="recipe" class="hint"></p>
     <div id="status" role="status" aria-live="polite"></div>
   </div>
 
   <p class="note">De code wordt berekend uit je <strong>gebruiker, de naam van de app en je wachtwoord</strong> (PBKDF2-SHA256, 600.000 rondes). Een andere gebruiker, app of een ander wachtwoord geeft een totaal andere code, ook op hetzelfde apparaat. Je wachtwoord en de codes worden nooit opgeslagen of verstuurd. Onthoud je wachtwoord en de schrijfwijze van gebruiker en app (hoofdletters en spaties aan de randen tellen niet mee). "Knippen" kopieert de code en wist hem van het scherm.</p>
   <p class="note">Op dit apparaat onthoudt de app leesbaar de gebruikersnamen en per gebruiker de laatste 5 appnamen, plus per combinatie de laatst gekozen lengte en het versienummer (onder een sleutel die niet naar naam of wachtwoord terug te rekenen is). Wie jouw gebruiker kiest ziet dus jouw appnamen, maar nooit je wachtwoord of codes. Op een ander apparaat begin je weer bij versie 1: noteer het versienummer als je een nieuwe code liet maken. <button type="button" id="forget" class="linkbtn">Wis onthouden gegevens</button></p>
+  <p class="note">Rekenmethode 3. Dezelfde code op twee apparaten? Dan moeten gebruiker, app, wachtwoord, lengte, versie en rekenmethode gelijk zijn.</p>
 </main>
 
 <script>
 (() => {
   const $ = (id) => document.getElementById(id);
   const app = $('app'), pw = $('pw'), out = $('output'), status = $('status');
-  const makeBtn = $('make'), prevBtn = $('prev'), hint = $('lenHint'), forgetBtn = $('forget');
+  const makeBtn = $('make'), verDown = $('verDown'), verUp = $('verUp'), verNum = $('verNum'), recipe = $('recipe'), hint = $('lenHint'), forgetBtn = $('forget');
   const copyBtn = $('copy'), cutBtn = $('cut'), toggle = $('toggle');
   const user = $('user'), userBtn = $('userBtn'), userMenu = $('userMenu');
   const recentBtn = $('recentBtn'), recentMenu = $('recentMenu');
@@ -174,6 +186,8 @@
   let rec = null;         // onthouden { len, ver } van deze combinatie, of null als de combinatie nieuw is
   let hidden = false;     // code is geknipt: wel bekend, niet getoond
   let busy = false;
+  let pendingVer = 1;     // gekozen versie voor een nieuwe combinatie, voor Code maken
+  const curVer = () => rec ? rec.ver : pendingVer;
   let current = '';
 
   const getLen = () => +document.querySelector('input[name=len]:checked').value;
@@ -192,7 +206,7 @@
   }
 
   // Eén dure afleiding (PBKDF2, één blok) per gebruiker + app + wachtwoord.
-  const norm = (t) => t.trim().toLowerCase().normalize('NFKC');
+  const norm = (t) => t.trim().replace(/\s+/g, ' ').toLowerCase().normalize('NFKC');
   async function deriveKey(who, name, secret) {
     const key = await crypto.subtle.importKey('raw', enc.encode(secret.normalize('NFKC')), 'PBKDF2', false, ['deriveBits']);
     const salt = enc.encode('wachtwoord-maker|v3|' + JSON.stringify([norm(who), norm(name)]));
@@ -336,6 +350,7 @@
     current = v;
     out.value = v;
     copyBtn.disabled = cutBtn.disabled = !v;
+    recipe.textContent = v ? `Deze code: lengte ${getLen()}, versie ${curVer()}. Op een ander apparaat moeten gebruiker, app, wachtwoord, lengte en versie hetzelfde zijn.` : '';
   }
 
   function say(msg) {
@@ -346,12 +361,13 @@
 
   function refreshUI() {
     makeBtn.disabled = busy;
-    prevBtn.hidden = !(rec && rec.ver > 1);
-    prevBtn.textContent = rec ? `Vorige versie (${rec.ver - 1})` : '';
+    verNum.textContent = curVer();
+    verDown.disabled = busy || curVer() <= 1;
+    verUp.disabled = busy;
     if (!rec) {
       makeBtn.textContent = 'Code maken';
       markRemembered(null);
-      if (!busy && base) hint.textContent = 'Nieuwe combinatie. Kies een lengte en druk op Code maken.';
+      if (!busy && base) hint.textContent = 'Nieuwe combinatie op dit apparaat. Zet lengte en versie hetzelfde als op je andere apparaat en druk op Code maken.';
       return;
     }
     makeBtn.textContent = hidden ? 'Toon code' : 'Nieuwe code maken';
@@ -432,7 +448,7 @@
     if (busy) return;
     if (!base) { await resolve(); if (!base || rec) return; }   // bekend: resolve toonde de code al
     if (!rec) {
-      rec = { len: getLen(), ver: 1 };                          // nieuwe combinatie
+      rec = { len: getLen(), ver: pendingVer };                 // nieuwe combinatie
       saveRecord(base.id, rec);
       remember(user.value, app.value);
     } else if (hidden) {
@@ -445,12 +461,18 @@
     if (rec.ver > 1 && !hidden) say(`Nieuwe code gemaakt (versie ${rec.ver}).`);
   }
 
-  async function onPrev() {
-    if (!rec || rec.ver <= 1) return;
-    rec = { len: getLen(), ver: rec.ver - 1 };
-    saveRecord(base.id, rec);
-    await show(); refreshUI();
-    say(`Terug naar versie ${rec.ver}.`);
+  async function stepVer(d) {
+    if (busy) return;
+    const nv = curVer() + d;
+    if (nv < 1) return;
+    if (rec) {
+      rec = { len: getLen(), ver: nv };
+      saveRecord(base.id, rec);
+      await show();
+    } else {
+      pendingVer = nv;                 // nieuwe combinatie: geldt pas bij Code maken
+    }
+    refreshUI();
   }
 
   async function onLengthChange() {
@@ -485,7 +507,8 @@
   }
   $('form').addEventListener('submit', (e) => e.preventDefault());
   makeBtn.addEventListener('click', onMake);
-  prevBtn.addEventListener('click', onPrev);
+  verDown.addEventListener('click', () => stepVer(-1));
+  verUp.addEventListener('click', () => stepVer(1));
   document.querySelectorAll('input[name=len]').forEach(r => r.addEventListener('change', onLengthChange));
 
   toggle.addEventListener('click', () => {
