@@ -1,6 +1,6 @@
 // Cachet de app zodat hij ook offline werkt. Verhoog VERSION bij elke wijziging.
-const VERSION = 'v10';
-const FILES = ['./', './index.html', './manifest.webmanifest', './lion.svg', './icon.svg', './icon-192.png', './icon-512.png', './apple-touch-icon.png'];
+const VERSION = 'v11';
+const FILES = ['./', './index.html', './manifest.webmanifest', './icon.svg', './icon-192.png', './icon-512.png', './apple-touch-icon.png'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(VERSION).then((c) => c.addAll(FILES)).then(() => self.skipWaiting()));

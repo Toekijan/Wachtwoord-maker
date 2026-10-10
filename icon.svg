@@ -1,34 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <rect width="512" height="512" fill="#1f5fd1"/>
-  <g transform="translate(76 70) scale(1.8)">
-  <g fill="#f0a800" stroke="#4a2c00" stroke-width="3" stroke-linejoin="round" stroke-linecap="round">
-    <!-- staart met kwast -->
-    <path d="M146 134 C176 140 186 110 170 92 C160 80 168 66 180 66" fill="none" stroke="#4a2c00" stroke-width="10"/>
-    <path d="M146 134 C176 140 186 110 170 92 C160 80 168 66 180 66" fill="none" stroke="#f0a800" stroke-width="4.5"/>
-    <path d="M178 66 C170 56 180 44 192 50 C196 60 188 70 178 66Z"/>
-    <!-- achterpoot omhoog (gebogen) -->
-    <path d="M118 140 C104 146 92 156 84 170 L94 180 C108 176 122 168 134 156 Z"/>
-    <path d="M84 170 l-8 2 M88 176 l-8 5 M94 180 l-4 7" fill="none"/>
-    <!-- achterpoot staand -->
-    <path d="M132 146 C138 160 138 172 132 184 L158 184 C156 170 160 156 152 136 Z"/>
-    <path d="M132 184 l-3 6 M142 184 l-1 7 M152 184 l1 7" fill="none"/>
-    <!-- romp -->
-    <path d="M98 64 C116 64 128 78 130 96 C132 108 146 114 152 128 C156 142 146 152 132 152 C122 146 114 138 108 130 C98 118 92 104 92 90 C92 78 94 70 98 64 Z"/>
-    <!-- voorpoot hoog -->
-    <path d="M96 78 C82 74 68 72 56 62 L50 52 L60 50 L68 58 C78 64 90 66 100 66 Z"/>
-    <!-- voorpoot laag -->
-    <path d="M96 100 C80 100 64 96 52 84 L46 72 L56 70 L64 82 C74 88 88 88 98 86 Z"/>
-    <path d="M46 72 l-7 -2 M52 70 l-4 -6 M58 70 l1 -7" fill="none"/>
-    <!-- manen (vlammen) -->
-    <path d="M100 30 C112 26 122 34 120 46 C130 48 134 60 126 68 C128 80 116 88 106 82 C98 90 86 84 88 74 C80 70 80 58 88 54 C84 44 90 34 100 30 Z"/>
-    <!-- hoofd in profiel -->
-    <path d="M96 36 C86 30 70 34 62 44 C58 48 54 52 56 58 C54 62 56 68 64 70 C72 76 86 76 94 68 C100 62 102 46 96 36 Z"/>
-  </g>
-  <!-- kroon -->
-  <path d="M76 30 L78 14 L86 24 L94 10 L102 24 L110 14 L112 30 Z" fill="#ffd400" stroke="#4a2c00" stroke-width="3" stroke-linejoin="round"/>
-  <!-- gezicht -->
-  <circle cx="76" cy="46" r="2.8" fill="#2a1500"/>
-  <path d="M56 56 l8 -2 l-2 6 z" fill="#2a1500"/>
-  <path d="M58 64 C66 70 78 70 88 64" fill="#c4161c" stroke="#2a1500" stroke-width="2.5"/>
-  </g>
+  <rect width="512" height="512" fill="#3b4a5a"/>
+  <path d="M176 232v-48a80 80 0 0 1 160 0v48" fill="none" stroke="#fff" stroke-width="32" stroke-linecap="round"/>
+  <rect x="148" y="224" width="216" height="168" rx="28" fill="#fff"/>
+  <circle cx="256" cy="298" r="22" fill="#3b4a5a"/>
+  <rect x="244" y="310" width="24" height="44" rx="8" fill="#3b4a5a"/>
 </svg>

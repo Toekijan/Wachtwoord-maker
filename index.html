@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#1f5fd1">
+<meta name="theme-color" content="#3b4a5a">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="Wachtwoord">
@@ -15,15 +15,15 @@
 <title>Wachtwoord Maker</title>
 <style>
   :root {
-    --bg: #f4f6fa; --card: #ffffff; --text: #1b2330; --muted: #5d6b82;
-    --border: #cfd7e3; --accent: #1f5fd1; --accent-text: #ffffff;
-    --ok: #17803d; --code-bg: #eef2f8;
+    --bg: #f1f3f5; --card: #ffffff; --text: #1f2933; --muted: #5f6b7a;
+    --border: #cfd5dc; --accent: #3b4a5a; --accent-text: #ffffff;
+    --ok: #3b4a5a; --glow: #1f2933; --code-bg: #f4f5f7;
   }
   @media (prefers-color-scheme: dark) {
     :root {
-      --bg: #11151c; --card: #1a202b; --text: #e8edf5; --muted: #9aa8bd;
-      --border: #2f3a4b; --accent: #5b94f5; --accent-text: #0b1220;
-      --ok: #4cc27a; --code-bg: #121820;
+      --bg: #15181c; --card: #1e2227; --text: #e6e9ed; --muted: #9aa4b0;
+      --border: #333a42; --accent: #aeb9c6; --accent-text: #14181c;
+      --ok: #aeb9c6; --glow: #e6e9ed; --code-bg: #171b1f;
     }
   }
   * { box-sizing: border-box; }
@@ -35,9 +35,7 @@
     max-width: 520px; margin: 0 auto; background: var(--card);
     border: 1px solid var(--border); border-radius: 14px; padding: 24px;
   }
-  .brand { display: flex; align-items: center; gap: 12px; margin-bottom: 4px; }
-  .brand img { width: 56px; height: 56px; flex: none; }
-  h1 { font-size: 1.4rem; margin: 0; }
+  h1 { font-size: 1.4rem; margin: 0 0 4px; }
   p.sub { margin: 0 0 20px; color: var(--muted); font-size: .9rem; }
   label { display: block; font-weight: 600; margin: 16px 0 6px; }
   input[type=text], input[type=password] {
@@ -63,10 +61,8 @@
     display: block; padding: 9px 16px; border: 1px solid var(--border);
     border-radius: 8px; font-weight: 600; background: var(--bg);
   }
-  .len.remembered span { box-shadow: 0 0 0 3px var(--ok), 0 0 14px var(--ok); border-color: var(--ok); animation: glow 1.4s ease-out 2; }
+  .len.remembered span { box-shadow: 0 0 0 2px var(--card), 0 0 0 5px var(--glow); }
   .len.remembered span::after { content: " ★"; }
-  @keyframes glow { 50% { box-shadow: 0 0 0 6px var(--ok), 0 0 22px var(--ok); } }
-  @media (prefers-reduced-motion: reduce) { .len.remembered span { animation: none; } }
   .len input:checked + span { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
   .result { margin-top: 24px; }
   #output {
@@ -99,10 +95,7 @@
 </head>
 <body>
 <main>
-  <div class="brand">
-    <img src="lion.svg" alt="" width="56" height="56">
-    <h1>Wachtwoord Maker</h1>
-  </div>
+  <h1>Wachtwoord Maker</h1>
   <p class="sub">Zelfde gebruiker + app + wachtwoord = dezelfde code, tot je zelf een nieuwe laat maken. Alles gebeurt lokaal in je browser.</p>
 
   <form id="form" novalidate>
