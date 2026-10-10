@@ -1,5 +1,5 @@
 // Cachet de app zodat hij ook offline werkt. Verhoog VERSION bij elke wijziging.
-const VERSION = 'v8';
+const VERSION = 'v9';
 const FILES = ['./', './index.html', './manifest.webmanifest', './icon-192.png', './icon-512.png', './apple-touch-icon.png'];
 
 self.addEventListener('install', (e) => {
