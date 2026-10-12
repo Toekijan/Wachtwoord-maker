@@ -32,9 +32,18 @@
     font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   }
   main {
-    max-width: 520px; margin: 0 auto; background: var(--card);
+    max-width: 520px; margin: 0 auto;
+    background:
+      linear-gradient(color-mix(in srgb, var(--card) 35%, transparent), color-mix(in srgb, var(--card) 35%, transparent)),
+      linear-gradient(to bottom, #ae1c28 0 33.34%, #ffffff 33.34% 66.67%, #21468b 66.67% 100%);
     border: 1px solid var(--border); border-radius: 14px; padding: 24px;
   }
+  h1, p.sub, label, #status, .hint, .note {
+    width: fit-content; max-width: 100%; background: var(--card);
+    padding: 2px 8px; border-radius: 6px;
+  }
+  .len { padding: 0; background: none; }
+  #status:empty, .hint:empty { background: none; padding: 0; }
   h1 { font-size: 1.4rem; margin: 0 0 4px; }
   p.sub { margin: 0 0 20px; color: var(--muted); font-size: .9rem; }
   label { display: block; font-weight: 600; margin: 16px 0 6px; }
