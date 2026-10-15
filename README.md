@@ -12,5 +12,5 @@ opslag in Netlify Blobs) ziet alleen een onleesbare id en versleutelde bytes. Wa
 
 - Statische bestanden staan in `public/` (Netlify publiceert die map).
 - De functie draait automatisch op Netlify op `/api/vault`; er is geen extra instelling of sleutel nodig.
-- Tests voor de functie: `npm install && npm test`.
+- Tests voor de functie staan in `tests/` (niet in `netlify/functions`, want Netlify bundelt elk bestand daar als functie): `npm install && npm test`.
 - Zonder server (bijvoorbeeld lokaal geopend) werkt de app gewoon, alleen op dat ene apparaat.

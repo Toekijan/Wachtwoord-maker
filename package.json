@@ -5,7 +5,7 @@
   "description": "Wachtwoord Maker met versleutelde synchronisatie via Netlify Functions",
   "type": "module",
   "scripts": {
-    "test": "node netlify/functions/vault.test.mjs"
+    "test": "node tests/vault.test.mjs"
   },
   "dependencies": {
     "@netlify/blobs": "^11.1.4"
