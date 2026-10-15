@@ -117,20 +117,22 @@
     <ul id="userMenu" class="menu" hidden></ul>
   </div>
 
-  <label for="app">Naam van de app</label>
-  <div class="combo">
-    <div class="row">
-      <input id="app" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="bijv. Netflix">
-      <button type="button" id="recentBtn" aria-haspopup="true" aria-expanded="false" aria-controls="recentMenu" aria-label="Laatst gebruikte namen" title="Laatst gebruikte namen" disabled>▾</button>
-    </div>
-    <ul id="recentMenu" class="menu" hidden></ul>
-  </div>
-
   <label for="pw">Zelfverzonnen wachtwoord</label>
   <div class="row">
     <input id="pw" name="password" type="password" autocomplete="current-password" spellcheck="false" placeholder="Jouw geheime wachtwoord">
     <button type="button" id="toggle" aria-pressed="false">Toon</button>
   </div>
+
+  <label for="app">Naam van de app</label>
+  <div class="combo">
+    <div class="row">
+      <input id="app" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="bijv. Netflix">
+      <button type="button" id="recentBtn" aria-haspopup="true" aria-expanded="false" aria-controls="recentMenu" aria-label="Laatst gebruikte namen" title="Vul eerst gebruiker en wachtwoord in" disabled>▾</button>
+    </div>
+    <ul id="recentMenu" class="menu" hidden></ul>
+  </div>
+
+  <p id="sync" class="hint" role="status" aria-live="polite"></p>
 
   <label id="lenLabel">Lengte van de code</label>
   <div class="lengths" role="radiogroup" aria-labelledby="lenLabel">
@@ -154,7 +156,7 @@
 
   <div class="result">
     <label for="output">Jouw code</label>
-    <textarea id="output" readonly rows="2" placeholder="Vul gebruiker, app en wachtwoord in."></textarea>
+    <textarea id="output" readonly rows="2" placeholder="Vul gebruiker, wachtwoord en app in."></textarea>
     <div class="actions">
       <button type="button" class="primary" id="copy" disabled>Kopiëren</button>
       <button type="button" id="cut" disabled>Knippen</button>
@@ -163,19 +165,19 @@
     <div id="status" role="status" aria-live="polite"></div>
   </div>
 
-  <p class="note">De code wordt berekend uit je <strong>gebruiker, de naam van de app en je wachtwoord</strong> (PBKDF2-SHA256, 600.000 rondes). Een andere gebruiker, app of een ander wachtwoord geeft een totaal andere code, ook op hetzelfde apparaat. De app zelf slaat je wachtwoord en de codes nooit op en verstuurt ze niet. Wil je het wachtwoord automatisch laten invullen, sta dan je browser of wachtwoordbeheerder toe het per gebruiker te bewaren; die beveiligt het met de inlog van je apparaat. Onthoud je wachtwoord en de schrijfwijze van gebruiker en app (hoofdletters en spaties aan de randen tellen niet mee). "Knippen" kopieert de code en wist hem van het scherm.</p>
-  <p class="note">Op dit apparaat onthoudt de app leesbaar de gebruikersnamen en per gebruiker de laatste 5 appnamen, plus per combinatie de laatst gekozen lengte en het versienummer (onder een sleutel die niet naar naam of wachtwoord terug te rekenen is). Wie jouw gebruiker kiest ziet dus jouw appnamen, maar nooit je wachtwoord of codes. Op een ander apparaat begin je weer bij versie 1: noteer het versienummer als je een nieuwe code liet maken. <button type="button" id="forget" class="linkbtn">Wis onthouden gegevens</button></p>
+  <p class="note">De code wordt berekend uit je <strong>gebruiker, je wachtwoord en de naam van de app</strong> (PBKDF2-SHA256, 600.000 rondes). Een andere gebruiker, app of een ander wachtwoord geeft een totaal andere code, ook op hetzelfde apparaat. Je wachtwoord en de codes zelf worden nooit opgeslagen of verstuurd. Onthoud je wachtwoord en de schrijfwijze van gebruiker en app (hoofdletters en spaties aan de randen tellen niet mee). "Knippen" kopieert de code en wist hem van het scherm.</p>
+  <p class="note"><strong>Zelfde scherm op al je apparaten.</strong> Per gebruiker bewaart de app een versleutelde kluis met je apps, de gekozen lengte en het versienummer. De sleutel komt uit je gebruiker en wachtwoord en verlaat je apparaat niet; de server bewaart alleen onleesbare gegevens. Vul op een ander apparaat dezelfde gebruiker en hetzelfde wachtwoord in en je apps staan er, met dezelfde lengte en versie. Je wachtwoord zelf vult je browser of wachtwoordbeheerder in als je dat toestaat (met iCloud-sleutelhanger of Google Wachtwoordbeheer ook tussen apparaten). Het lijstje met gebruikers staat leesbaar op dit apparaat. <button type="button" id="forget" class="linkbtn">Wis alles op dit apparaat</button></p>
   <p class="note">Rekenmethode 3. Dezelfde code op twee apparaten? Dan moeten gebruiker, app, wachtwoord, lengte, versie en rekenmethode gelijk zijn.</p>
 </main>
 
 <script>
 (() => {
   const $ = (id) => document.getElementById(id);
-  const app = $('app'), pw = $('pw'), out = $('output'), status = $('status');
-  const makeBtn = $('make'), verDown = $('verDown'), verUp = $('verUp'), verNum = $('verNum'), recipe = $('recipe'), hint = $('lenHint'), forgetBtn = $('forget');
+  const user = $('user'), app = $('app'), pw = $('pw'), out = $('output'), status = $('status');
+  const makeBtn = $('make'), verDown = $('verDown'), verUp = $('verUp'), verNum = $('verNum');
+  const recipe = $('recipe'), hint = $('lenHint'), syncEl = $('sync'), forgetBtn = $('forget');
   const copyBtn = $('copy'), cutBtn = $('cut'), toggle = $('toggle');
-  const user = $('user'), userBtn = $('userBtn'), userMenu = $('userMenu');
-  const recentBtn = $('recentBtn'), recentMenu = $('recentMenu');
+  const userBtn = $('userBtn'), userMenu = $('userMenu'), recentBtn = $('recentBtn'), recentMenu = $('recentMenu');
 
   const LOWER = 'abcdefghijkmnopqrstuvwxyz';   // zonder l
   const UPPER = 'ABCDEFGHJKLMNPQRSTUVWXYZ';    // zonder I, O
@@ -185,22 +187,30 @@
   const ITERATIONS = 600000;
   const STREAM_BYTES = 4096, MAX_ATTEMPTS = 250;
   const LENGTHS = [6, 8, 16, 32, 64];
-  const enc = new TextEncoder();
+  const API = '/api/vault';
+  const enc = new TextEncoder(), dec = new TextDecoder();
 
-  let run = 0;            // elke wijziging van naam/wachtwoord maakt lopende berekeningen ongeldig
-  let timer = null;
-  let base = null;        // { hk, id, cache } voor de huidige naam + wachtwoord
-  let rec = null;         // onthouden { len, ver } van deze combinatie, of null als de combinatie nieuw is
+  let run = 0;            // geldigheid van de berekening voor de huidige app
+  let vrun = 0;           // geldigheid van het ontgrendelen van de kluis (gebruiker + wachtwoord)
+  let timer = null, vtimer = null, ptimer = null;
+  let vault = null;       // { id, aes, data, rev } na ontgrendelen
+  let unlocking = null;   // belofte van het ontgrendelen dat loopt
+  let base = null;        // { hk, id, cache } voor de huidige gebruiker + app + wachtwoord
+  let rec = null;         // onthouden { len, ver } van deze app, of null als de combinatie nieuw is
   let hidden = false;     // code is geknipt: wel bekend, niet getoond
   let busy = false;
   let pendingVer = 1;     // gekozen versie voor een nieuwe combinatie, voor Code maken
-  const curVer = () => rec ? rec.ver : pendingVer;
   let current = '';
+  const curVer = () => rec ? rec.ver : pendingVer;
 
   const getLen = () => +document.querySelector('input[name=len]:checked').value;
   const selectLength = (len) => { document.querySelector(`input[name=len][value="${len}"]`).checked = true; };
+  const norm = (t) => t.trim().replace(/\s+/g, ' ').toLowerCase().normalize('NFKC');
+  const hex = (u8) => [...u8].map(b => b.toString(16).padStart(2, '0')).join('');
+  const b64 = (u8) => btoa(String.fromCharCode(...u8));
+  const unb64 = (s) => Uint8Array.from(atob(s), c => c.charCodeAt(0));
 
-  // ---------- Afleiding ----------
+  // ---------- Afleiding van de code ----------
 
   // Rejection sampling: geen modulo-bias. Retourneert null als de bytes op zijn.
   function pick(bytes, state, set) {
@@ -212,17 +222,19 @@
     return null;
   }
 
-  // Eén dure afleiding (PBKDF2, één blok) per gebruiker + app + wachtwoord.
-  const norm = (t) => t.trim().replace(/\s+/g, ' ').toLowerCase().normalize('NFKC');
-  async function deriveKey(who, name, secret) {
+  async function pbkdf2Seed(salt, secret) {
     const key = await crypto.subtle.importKey('raw', enc.encode(secret.normalize('NFKC')), 'PBKDF2', false, ['deriveBits']);
-    const salt = enc.encode('wachtwoord-maker|v3|' + JSON.stringify([norm(who), norm(name)]));
-    const seed = await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt, iterations: ITERATIONS }, key, 256);
-    return crypto.subtle.importKey('raw', seed, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+    return crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt: enc.encode(salt), iterations: ITERATIONS }, key, 256);
+  }
+  const hmacKey = (raw) => crypto.subtle.importKey('raw', raw, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+
+  // Eén dure afleiding per gebruiker + app + wachtwoord. Salt en labels blijven gelijk, zodat codes niet veranderen.
+  async function deriveKey(who, name, secret) {
+    return hmacKey(await pbkdf2Seed('wachtwoord-maker|v3|' + JSON.stringify([norm(who), norm(name)]), secret));
   }
 
   // Goedkope uitrekking tot een reeks bytes per versie. Versie 1 is de oorspronkelijke reeks;
-  // een nieuwe versie geeft een totaal andere code voor dezelfde naam + wachtwoord.
+  // een nieuwe versie geeft een totaal andere code voor dezelfde gebruiker + app + wachtwoord.
   async function getBytes(ver) {
     if (base.cache.has(ver)) return base.cache.get(ver);
     const bytes = new Uint8Array(STREAM_BYTES);
@@ -252,55 +264,135 @@
     throw new Error('Kon geen code afleiden');
   }
 
-  // Sleutel voor het geheugen: hash van de (dure) PBKDF2-afleiding met een eigen label.
-  // Niet terug te rekenen naar naam, wachtwoord of de code zelf. Hangt niet van de versie af.
-  async function recordId(bytes1) {
+  // Sleutel van een oud, alleen-lokaal record (van vóór de synchronisatie). Alleen nog gebruikt om over te zetten.
+  async function legacyId(bytes1) {
     const label = enc.encode('wachtwoord-maker|lengte|v1|');
     const buf = new Uint8Array(label.length + 32);
     buf.set(label); buf.set(bytes1.subarray(0, 32), label.length);
-    const h = new Uint8Array(await crypto.subtle.digest('SHA-256', buf));
-    return [...h].map(b => b.toString(16).padStart(2, '0')).join('');
+    return hex(new Uint8Array(await crypto.subtle.digest('SHA-256', buf)));
   }
-
-  // ---------- Geheugen (alleen op dit apparaat) ----------
-
-  const STORE = 'wm.lengths', APPS = 'wm.apps';
-  function loadRecord(id) {
+  function loadLegacy(id) {
     try {
-      const v = (JSON.parse(localStorage.getItem(STORE)) || {})[id];
-      if (LENGTHS.includes(v)) return { len: v, ver: 1 };                       // oud formaat
+      const v = (JSON.parse(localStorage.getItem('wm.lengths')) || {})[id];
+      if (LENGTHS.includes(v)) return { len: v, ver: 1 };
       if (v && LENGTHS.includes(v.len) && Number.isInteger(v.ver) && v.ver >= 1) return { len: v.len, ver: v.ver };
     } catch {}
     return null;
   }
-  function saveRecord(id, r) {
-    try {
-      let m = {}; try { m = JSON.parse(localStorage.getItem(STORE)) || {}; } catch {}
-      m[id] = r; localStorage.setItem(STORE, JSON.stringify(m)); return true;
-    } catch { return false; }
+
+  // ---------- Kluis: versleutelde gegevens per gebruiker + wachtwoord ----------
+  // De kluis bevat per app de gekozen lengte en versie. De sleutel komt uit gebruiker + wachtwoord;
+  // de server ziet alleen een onleesbare id en versleutelde bytes.
+
+  async function deriveVault(who, secret) {
+    const hk = await hmacKey(await pbkdf2Seed('wachtwoord-maker|kluis|v1|' + JSON.stringify([norm(who)]), secret));
+    const id = hex(new Uint8Array(await crypto.subtle.sign('HMAC', hk, enc.encode('kluis-id'))));
+    const raw = await crypto.subtle.sign('HMAC', hk, enc.encode('kluis-sleutel'));
+    const aes = await crypto.subtle.importKey('raw', raw, 'AES-GCM', false, ['encrypt', 'decrypt']);
+    return { id, aes };
   }
+  async function seal(v) {
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv, additionalData: enc.encode(v.id) }, v.aes, enc.encode(JSON.stringify(v.data))));
+    const all = new Uint8Array(12 + ct.length); all.set(iv); all.set(ct, 12);
+    return b64(all);
+  }
+  async function open(v, blob) {
+    const all = unb64(blob);
+    const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: all.slice(0, 12), additionalData: enc.encode(v.id) }, v.aes, all.slice(12));
+    const d = JSON.parse(dec.decode(pt));
+    return d && typeof d.apps === 'object' && d.apps ? d : { v: 1, apps: {} };
+  }
+  function merge(a, b) {
+    const apps = { ...a.apps };
+    for (const [k, e] of Object.entries(b.apps)) if (!apps[k] || (e.t || 0) > (apps[k].t || 0)) apps[k] = e;
+    return { v: 1, apps };
+  }
+  const sig = (d) => JSON.stringify(Object.keys(d.apps).sort().map(k => [k, d.apps[k]]));
+  const CACHE = 'wm.kluis.';
+  const saveCache = async () => { try { localStorage.setItem(CACHE + vault.id, await seal(vault)); } catch {} };
+
+  function setSync(text) { syncEl.textContent = text; }
+
+  // Haalt de kluis van de server, voegt samen met wat lokaal staat en schrijft terug als er iets nieuws is.
+  async function syncNow(my) {
+    try {
+      for (let attempt = 0; attempt < 4; attempt++) {
+        const res = await fetch(`${API}?id=${vault.id}`, { cache: 'no-store' });
+        if (my !== vrun) return;
+        let remote = null, rev = 0;
+        if (!res.ok) throw new Error('sync ' + res.status);
+        const j = await res.json();
+        if (j.blob) { remote = await open(vault, j.blob); rev = j.rev; }
+        const merged = remote ? merge(vault.data, remote) : vault.data;
+        const changedLocal = sig(merged) !== sig(vault.data);
+        vault.data = merged; vault.rev = rev;
+        const needPush = Object.keys(merged.apps).length > 0 && (!remote || sig(merged) !== sig(remote));
+        if (needPush) {
+          const put = await fetch(API, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: vault.id, blob: await seal(vault), rev }) });
+          if (my !== vrun) return;
+          if (put.status === 409) continue;                 // iemand was ons voor: opnieuw ophalen en samenvoegen
+          if (!put.ok) throw new Error('sync ' + put.status);
+          vault.rev = (await put.json()).rev;
+        }
+        if (changedLocal) { await saveCache(); renderApps(); }
+        setSync('Gesynchroniseerd met je andere apparaten.');
+        return true;
+      }
+      throw new Error('sync conflict');
+    } catch {
+      if (my === vrun) setSync('Geen verbinding met de server: je gegevens blijven op dit apparaat en worden later gesynchroniseerd.');
+      return false;
+    }
+  }
+
+  // Ontgrendelt de kluis voor de huidige gebruiker + wachtwoord.
+  async function unlock() {
+    const my = ++vrun;
+    vault = null;
+    setSync('Kluis openen…');
+    const v = await deriveVault(user.value, pw.value);
+    if (my !== vrun) return;
+    let data = { v: 1, apps: {} };
+    try { const c = localStorage.getItem(CACHE + v.id); if (c) data = await open(v, c); } catch {}
+    if (my !== vrun) return;
+    vault = { ...v, data, rev: 0 };
+    rememberUser(user.value);
+    renderApps();
+    await syncNow(my);
+  }
+  function startUnlock() {
+    unlocking = unlock().catch(() => { setSync('Kluis openen mislukt.'); });
+    return unlocking;
+  }
+
+  // Zet de keuze voor een app in de kluis en synchroniseer kort daarna.
+  function setRecord(name, r) {
+    if (!vault) return;
+    vault.data.apps[norm(name)] = { name: name.trim().replace(/\s+/g, ' '), len: r.len, ver: r.ver, t: Date.now() };
+    saveCache(); renderApps();
+    clearTimeout(ptimer);
+    const my = vrun;
+    ptimer = setTimeout(() => { if (my === vrun) { setSync('Synchroniseren…'); syncNow(my); } }, 400);
+  }
+  function getRecord(name) {
+    const e = vault && vault.data.apps[norm(name)];
+    return e && LENGTHS.includes(e.len) && Number.isInteger(e.ver) && e.ver >= 1 ? { len: e.len, ver: e.ver, t: e.t || 0 } : null;
+  }
+  window.addEventListener('online', () => { if (vault) { setSync('Synchroniseren…'); syncNow(vrun); } });
+
+  // ---------- Gebruikers (leesbaar, alleen op dit apparaat) ----------
+
   const USERS = 'wm.users';
-  function readList(key, max) {
-    try { const a = JSON.parse(localStorage.getItem(key)); return Array.isArray(a) ? a.filter(x => typeof x === 'string').slice(0, max) : []; }
+  function loadUsers() {
+    try { const a = JSON.parse(localStorage.getItem(USERS)); return Array.isArray(a) ? a.filter(x => typeof x === 'string').slice(0, 10) : []; }
     catch { return []; }
   }
-  function pushName(list, name, max) {
+  function rememberUser(name) {
     const n = name.trim();
-    return [n, ...list.filter(x => norm(x) !== norm(n))].slice(0, max);
-  }
-  const loadUsers = () => readList(USERS, 10);
-  function loadApps(who) {
-    try { const m = JSON.parse(localStorage.getItem(APPS)); const a = m && !Array.isArray(m) ? m[norm(who)] : null; return Array.isArray(a) ? a.filter(x => typeof x === 'string').slice(0, 5) : []; }
-    catch { return []; }
-  }
-  function remember(who, name) {
-    try {
-      localStorage.setItem(USERS, JSON.stringify(pushName(loadUsers(), who, 10)));
-      let m = {}; try { const o = JSON.parse(localStorage.getItem(APPS)); if (o && !Array.isArray(o)) m = o; } catch {}
-      m[norm(who)] = pushName(loadApps(who), name, 5);
-      localStorage.setItem(APPS, JSON.stringify(m));
-    } catch {}
-    renderUsers(); renderApps();
+    const list = [n, ...loadUsers().filter(x => norm(x) !== norm(n))].slice(0, 10);
+    try { localStorage.setItem(USERS, JSON.stringify(list)); } catch {}
+    renderUsers();
   }
 
   // ---------- Uitklapmenu's (gebruikers en laatste appnamen) ----------
@@ -336,15 +428,17 @@
   function renderUsers() {
     fillMenu(userBtn, userMenu, loadUsers(), (name) => {
       // Van gebruiker wisselen: velden van de vorige gebruiker leegmaken, zodat die niet in beeld blijft.
-      user.value = name; app.value = ''; pw.value = '';
-      invalidate(); renderApps(); app.focus();
+      user.value = name; pw.value = ''; app.value = '';
+      onCredChange(); pw.focus();
     });
   }
+  // De appnamen komen uit de versleutelde kluis: pas zichtbaar als gebruiker + wachtwoord kloppen.
   function renderApps() {
-    fillMenu(recentBtn, recentMenu, user.value.trim() ? loadApps(user.value) : [], (name) => {
-      app.value = name; invalidate();
-      if (pw.value) scheduleResolve(); else pw.focus();
-    });
+    const names = vault
+      ? Object.values(vault.data.apps).sort((a, b) => (b.t || 0) - (a.t || 0)).slice(0, 5).map(e => e.name)
+      : [];
+    fillMenu(recentBtn, recentMenu, names, (name) => { app.value = name; onAppChange(); });
+    recentBtn.title = vault ? 'Laatst gebruikte apps' : 'Vul eerst gebruiker en wachtwoord in';
   }
 
   // ---------- Weergave ----------
@@ -357,7 +451,7 @@
     current = v;
     out.value = v;
     copyBtn.disabled = cutBtn.disabled = !v;
-    recipe.textContent = v ? `Deze code: lengte ${getLen()}, versie ${curVer()}. Op een ander apparaat moeten gebruiker, app, wachtwoord, lengte en versie hetzelfde zijn.` : '';
+    recipe.textContent = v ? `Deze code: lengte ${getLen()}, versie ${curVer()}. Staat versleuteld in je kluis en komt op je andere apparaten vanzelf mee.` : '';
   }
 
   function say(msg) {
@@ -374,12 +468,12 @@
     if (!rec) {
       makeBtn.textContent = 'Code maken';
       markRemembered(null);
-      if (!busy && base) hint.textContent = 'Nieuwe combinatie op dit apparaat. Zet lengte en versie hetzelfde als op je andere apparaat en druk op Code maken.';
+      if (!busy && base) hint.textContent = 'Nieuwe app voor deze gebruiker. Kies een lengte en druk op Code maken.';
       return;
     }
     makeBtn.textContent = hidden ? 'Toon code' : 'Nieuwe code maken';
     markRemembered(rec.len);
-    hint.textContent = `Bekende combinatie: laatste code had lengte ${rec.len} (versie ${rec.ver}). Je kunt de lengte wijzigen of een nieuwe code laten maken.`;
+    hint.textContent = `Bekende app: laatste code had lengte ${rec.len} (versie ${rec.ver}). Je kunt de lengte wijzigen of een nieuwe code laten maken.`;
   }
 
   async function show() {
@@ -397,22 +491,32 @@
 
   // ---------- Stroom ----------
 
-  // Naam of wachtwoord veranderd: oude code hoort niet meer op het scherm.
-  function invalidate() {
+  const credsReady = () => user.value.trim() && pw.value;
+  const ready = () => credsReady() && app.value.trim();
+
+  function clearApp() {
     run++; base = null; rec = null; hidden = false; busy = false;
     clearTimeout(timer);
     hint.textContent = '';
     setOutput('');
-    out.placeholder = 'Vul gebruiker, app en wachtwoord in.';
+    out.placeholder = 'Vul gebruiker, wachtwoord en app in.';
     refreshUI();
   }
 
-  const ready = () => user.value.trim() && app.value.trim() && pw.value;
+  // Gebruiker of wachtwoord veranderd: kluis en code horen niet meer op het scherm.
+  function onCredChange() {
+    vrun++; vault = null; unlocking = null;
+    clearTimeout(vtimer); clearTimeout(ptimer);
+    setSync('');
+    renderApps();
+    clearApp();
+    if (credsReady()) vtimer = setTimeout(async () => { await startUnlock(); if (vault && app.value.trim()) resolve(); }, 500);
+  }
 
-  function scheduleResolve() {
-    clearTimeout(timer);
-    if (!ready()) return;
-    timer = setTimeout(resolve, 500);
+  // App veranderd: alleen de code opnieuw bepalen.
+  function onAppChange() {
+    clearApp();
+    if (ready()) timer = setTimeout(resolve, 500);
   }
 
   // Berekent de combinatie en toont direct de eerder gemaakte code als die bekend is.
@@ -423,26 +527,30 @@
     hint.textContent = '';
     setOutput('');
     if (!ready()) {
-      out.placeholder = 'Vul eerst gebruiker, app en wachtwoord in.';
-      (!user.value.trim() ? user : !app.value.trim() ? app : pw).focus();
+      out.placeholder = 'Vul eerst gebruiker, wachtwoord en app in.';
+      (!user.value.trim() ? user : !pw.value ? pw : app).focus();
       refreshUI(); return;
     }
     out.placeholder = 'Berekenen…';
     busy = true; refreshUI();
     try {
+      if (!vault) { if (!unlocking) startUnlock(); await unlocking; }
+      if (my !== run) return;
       const hk = await deriveKey(user.value, app.value, pw.value);
       if (my !== run) return;
-      base = { hk, id: '', cache: new Map() };
-      base.id = await recordId(await getBytes(1));
-      if (my !== run) return;
-      rec = loadRecord(base.id);
+      base = { hk, cache: new Map() };
+      rec = getRecord(app.value);
+      if (!rec) {                                           // oud, alleen-lokaal record omzetten
+        const old = loadLegacy(await legacyId(await getBytes(1)));
+        if (old && vault) { setRecord(app.value, old); rec = getRecord(app.value); }
+      }
       if (rec) {
         selectLength(rec.len);
         await show();
         if (my !== run) return;
-        remember(user.value, app.value);
+        if (Date.now() - rec.t > 10 * 60 * 1000) setRecord(app.value, rec);   // 'laatst gebruikt' bijhouden
       } else {
-        out.placeholder = 'Nieuwe combinatie: druk op Code maken.';
+        out.placeholder = 'Nieuwe app: druk op Code maken.';
       }
     } catch (e) {
       if (my === run) { setOutput(''); out.placeholder = 'Fout: ' + e.message; }
@@ -463,15 +571,15 @@
   async function onMake() {
     if (busy) return;
     if (!base) { await resolve(); if (!base || rec) return; }   // bekend: resolve toonde de code al
+    if (!vault) return;
     if (!rec) {
-      rec = { len: getLen(), ver: pendingVer };                 // nieuwe combinatie
-      saveRecord(base.id, rec);
-      remember(user.value, app.value);
+      rec = { len: getLen(), ver: pendingVer };                 // nieuwe app
+      setRecord(app.value, rec);
     } else if (hidden) {
       hidden = false;                                           // alleen weer tonen
     } else {
       rec = { len: getLen(), ver: rec.ver + 1 };                // bewust een nieuwe code
-      saveRecord(base.id, rec);
+      setRecord(app.value, rec);
     }
     await show(); refreshUI();
     offerSave();
@@ -484,20 +592,19 @@
     if (nv < 1) return;
     if (rec) {
       rec = { len: getLen(), ver: nv };
-      saveRecord(base.id, rec);
+      setRecord(app.value, rec);
       await show();
     } else {
-      pendingVer = nv;                 // nieuwe combinatie: geldt pas bij Code maken
+      pendingVer = nv;                 // nieuwe app: geldt pas bij Code maken
     }
     refreshUI();
   }
 
   async function onLengthChange() {
-    if (!base || !rec) return;       // nieuwe combinatie: lengte geldt pas bij Code maken
+    if (!base || !rec) return;       // nieuwe app: lengte geldt pas bij Code maken
     rec = { len: getLen(), ver: rec.ver };
-    const ok = saveRecord(base.id, rec);
+    setRecord(app.value, rec);
     await show(); refreshUI();
-    if (!ok) hint.textContent = 'Lengte kon niet worden onthouden (opslag niet beschikbaar).';
   }
 
   async function copyText(t) {
@@ -514,11 +621,11 @@
   // ---------- Events ----------
 
   // Invullen door browser of wachtwoordbeheerder meldt zich als 'input' of 'change'.
-  const onFieldChange = (el) => { invalidate(); if (el === user) renderApps(); scheduleResolve(); };
-  for (const el of [user, app, pw]) {
-    el.addEventListener('input', () => onFieldChange(el));
-    el.addEventListener('change', () => { if (!base && !busy) onFieldChange(el); });
-    // Enter toont een bekende code (of maakt een nieuwe combinatie), maar maakt nooit per ongeluk een nieuwe versie.
+  const onField = (el) => (el === app ? onAppChange() : onCredChange());
+  for (const el of [user, pw, app]) {
+    el.addEventListener('input', () => onField(el));
+    el.addEventListener('change', () => { if (!busy && !vault && !base) onField(el); });
+    // Enter toont een bekende code (of maakt een nieuwe app), maar maakt nooit per ongeluk een nieuwe versie.
     el.addEventListener('keydown', (e) => {
       if (e.key !== 'Enter') return;
       e.preventDefault();
@@ -552,14 +659,17 @@
   });
 
   forgetBtn.addEventListener('click', () => {
-    try { localStorage.removeItem(STORE); localStorage.removeItem(APPS); localStorage.removeItem(USERS); say('Onthouden lengtes, versies en namen en gebruikers gewist.'); } catch { say('Wissen niet mogelijk.'); }
-    invalidate(); renderUsers(); renderApps(); scheduleResolve();
+    try {
+      Object.keys(localStorage).filter(k => k.startsWith('wm.')).forEach(k => localStorage.removeItem(k));
+      say('Alles op dit apparaat gewist. Op de server blijft je versleutelde kluis staan.');
+    } catch { say('Wissen niet mogelijk.'); }
+    renderUsers(); onCredChange();
   });
 
   renderUsers(); renderApps();
   refreshUI();
   // Autofill kan vlak na het laden invullen zonder dat wij een gebeurtenis zien.
-  for (const ms of [400, 1500]) setTimeout(() => { if (ready() && !base && !busy) scheduleResolve(); }, ms);
+  for (const ms of [400, 1500]) setTimeout(() => { if (credsReady() && !vault && !unlocking) onCredChange(); }, ms);
 
   if ('serviceWorker' in navigator && location.protocol !== 'file:') {
     navigator.serviceWorker.register('sw.js').catch(() => {});

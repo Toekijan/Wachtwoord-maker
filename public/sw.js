@@ -1,5 +1,5 @@
 // Cachet de app zodat hij ook offline werkt. Verhoog VERSION bij elke wijziging.
-const VERSION = 'v12';
+const VERSION = 'v13';
 const FILES = ['./', './index.html', './manifest.webmanifest', './icon.svg', './icon-192.png', './icon-512.png', './apple-touch-icon.png'];
 
 self.addEventListener('install', (e) => {
@@ -16,7 +16,7 @@ self.addEventListener('activate', (e) => {
 
 // Netwerk eerst (altijd de nieuwste versie), cache als je offline bent.
 self.addEventListener('fetch', (e) => {
-  if (e.request.method !== 'GET') return;
+  if (e.request.method !== 'GET' || new URL(e.request.url).pathname.startsWith('/api/')) return;
   e.respondWith(
     fetch(e.request)
       .then((res) => {
