@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { createHandler } from './vault.mjs';
+import { createHandler } from '../netlify/functions/vault.mjs';
 
 const mem = new Map();
 const store = { get: async (k) => mem.get(k) ?? null, setJSON: async (k, v) => { mem.set(k, structuredClone(v)); } };
